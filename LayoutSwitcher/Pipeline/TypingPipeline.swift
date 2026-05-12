@@ -247,7 +247,9 @@ final class TypingPipeline {
             )
             guard !isRetyping else { return }
 
-            if appState?.autoExtendRecentAmbiguous == true {
+            let extendEnabled = appState?.autoExtendRecentAmbiguous == true
+            Self.logger.info("trigger: \"\(originalText, privacy: .public)\" → \"\(corrected, privacy: .public)\" target=\(target.rawValue, privacy: .public) extend=\(extendEnabled, privacy: .public) history=\(self.committedHistory.count, privacy: .public)")
+            if extendEnabled {
                 let retroactive = collectRetroactiveCandidates(
                     currentTarget: target,
                     activeLanguage: activeLanguage
@@ -275,15 +277,32 @@ final class TypingPipeline {
         var retroactive: [PendingRetypeCandidate] = []
         let now = Date()
         let currentBundleID = focused.bundleID
+        Self.logger.info("auto-extend scan: history=\(self.committedHistory.count, privacy: .public) currentBundle=\(currentBundleID ?? "nil", privacy: .public) target=\(currentTarget.rawValue, privacy: .public)")
         for prior in committedHistory.dropLast().reversed() {
-            if retroactive.count >= tunables.autoExtendMaxRetroactiveWords { break }
-            if now.timeIntervalSince(prior.committedAt) > tunables.autoExtendWindow { break }
-            if prior.bundleID != currentBundleID { break }
-            if prior.separator != .space { break }
+            if retroactive.count >= tunables.autoExtendMaxRetroactiveWords {
+                Self.logger.info("auto-extend stop: max words reached")
+                break
+            }
+            let age = now.timeIntervalSince(prior.committedAt)
+            if age > tunables.autoExtendWindow {
+                Self.logger.info("auto-extend stop: age=\(age, privacy: .public)s > window=\(self.tunables.autoExtendWindow, privacy: .public)s")
+                break
+            }
+            if prior.bundleID != currentBundleID {
+                Self.logger.info("auto-extend stop: bundle mismatch prior=\(prior.bundleID ?? "nil", privacy: .public) current=\(currentBundleID ?? "nil", privacy: .public)")
+                break
+            }
+            if prior.separator != .space {
+                Self.logger.info("auto-extend stop: separator=\(String(describing: prior.separator), privacy: .public)")
+                break
+            }
             let wasAutoSwitched = recents.entries.contains { entry in
                 abs(entry.timestamp.timeIntervalSince(prior.committedAt)) < tunables.wasAutoSwitchedMatchWindow
             }
-            if wasAutoSwitched { break }
+            if wasAutoSwitched {
+                Self.logger.info("auto-extend stop: prior already auto-switched")
+                break
+            }
             let decision = detector.decide(
                 buffer: prior.characters,
                 activeLanguage: activeLanguage,
@@ -291,9 +310,11 @@ final class TypingPipeline {
                 correctSingleCharacterWords: true
             )
             guard case .switchAndRetype(let corrected, let target) = decision, target == currentTarget else {
+                Self.logger.info("auto-extend stop: decision=\(String(describing: decision), privacy: .public)")
                 break
             }
             let priorOriginal = detector.mapping.render(prior.characters, in: activeLanguage)
+            Self.logger.info("auto-extend pick: \"\(priorOriginal, privacy: .public)\" → \"\(corrected, privacy: .public)\"")
             retroactive.append(PendingRetypeCandidate(
                 word: prior,
                 activeLanguage: activeLanguage,
