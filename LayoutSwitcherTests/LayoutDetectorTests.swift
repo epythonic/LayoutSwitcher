@@ -213,6 +213,35 @@ struct LayoutDetectorTests {
         #expect(decision == .switchAndRetype(corrected: "я", target: .ru))
     }
 
+    @Test func singleZOnEnSwitchesEvenWhenActiveLangDictAcceptsAnyLetter() {
+        // Reproduces the production-only case: NSSpellChecker accepts every isolated
+        // Latin letter as a valid English word, which would otherwise short-circuit
+        // strictShortWordDecision and leave the prior word ambiguous in the
+        // auto-extend retroactive scan. With correctSingleCharacterWords=true (forced
+        // inside that scan) the active-language dictionary guard must be bypassed.
+        let permissiveDetector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: AlwaysTrueDictionary(),
+                .ru: EmbeddedDictionaries.russian(),
+                .uk: EmbeddedDictionaries.ukrainian(),
+                .ro: EmbeddedDictionaries.romanian()
+            ],
+            ngrams: [
+                .en: NGramModels.english(),
+                .ru: NGramModels.russian(),
+                .uk: NGramModels.ukrainian(),
+                .ro: NGramModels.romanian()
+            ]
+        )
+        let decision = permissiveDetector.decide(
+            buffer: chars([6]),
+            activeLanguage: .en,
+            correctSingleCharacterWords: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "я", target: .ru))
+    }
+
     // MARK: - Should keep
 
     @Test func realEnglishWordIsKept() {
@@ -295,4 +324,12 @@ struct LayoutDetectorTests {
             Issue.record("expected ambiguous, got \(decision)")
         }
     }
+}
+
+/// Permissive dictionary stub used to reproduce production behavior where
+/// `NSSpellChecker` accepts every isolated Latin letter as a valid English word.
+private struct AlwaysTrueDictionary: WordDictionary {
+    let language: LanguageID = .en
+    func contains(_ word: String) -> Bool { true }
+    var size: Int { Int.max }
 }

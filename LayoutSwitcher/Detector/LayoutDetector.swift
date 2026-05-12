@@ -58,8 +58,19 @@ final class LayoutDetector {
     }
 
     /// Applies dictionary-only correction for very short tokens with exactly one safe non-active hit.
-    private func strictShortWordDecision(buffer: [WordChar], activeLanguage: LanguageID, raw: String) -> LayoutDecision? {
-        if dictionaries[activeLanguage]?.contains(raw) == true {
+    /// Strict short-word decision. When `bypassActiveLanguageDict` is true the
+    /// active-language dictionary guard is skipped. This matters for single-char
+    /// tokens: `NSSpellChecker` accepts every isolated Latin letter as a valid
+    /// English "word", which would otherwise prevent any single-character
+    /// retroactive switch (e.g. `z` → `я`) even when the user has explicitly
+    /// opted into single-character correction.
+    private func strictShortWordDecision(
+        buffer: [WordChar],
+        activeLanguage: LanguageID,
+        raw: String,
+        bypassActiveLanguageDict: Bool = false
+    ) -> LayoutDecision? {
+        if !bypassActiveLanguageDict, dictionaries[activeLanguage]?.contains(raw) == true {
             return nil
         }
 
@@ -101,7 +112,12 @@ final class LayoutDetector {
             let strictMin = correctSingleCharacterWords ? 1 : thresholds.shortWordStrictMinLength
             if length >= strictMin,
                raw.allSatisfy({ $0.isLetter || ambiguousChars.contains($0) }),
-               let decision = strictShortWordDecision(buffer: buffer, activeLanguage: activeLanguage, raw: raw) {
+               let decision = strictShortWordDecision(
+                   buffer: buffer,
+                   activeLanguage: activeLanguage,
+                   raw: raw,
+                   bypassActiveLanguageDict: correctSingleCharacterWords && length == 1
+               ) {
                 return decision
             }
             return .ambiguous(reason: "too short (\(length))")
