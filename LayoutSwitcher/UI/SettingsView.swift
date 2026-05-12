@@ -17,9 +17,29 @@ struct SettingsView: View {
     @Bindable var recents: RecentSwitches
     let learningCache: LearningCache
     let launchAtLoginManager: LaunchAtLoginManager
+    let openHelp: () -> Void
 
-    /// Renders tabbed settings UI.
+    /// Renders tabbed settings UI with a top toolbar exposing the help shortcut.
     var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button(action: openHelp) {
+                    Label(String(localized: "settings.button.help"), systemImage: "questionmark.circle")
+                }
+                .controlSize(.regular)
+                .help(String(localized: "settings.button.help.tooltip"))
+                .keyboardShortcut("?", modifiers: [.command])
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            tabs
+        }
+        .frame(width: 820, height: 700)
+    }
+
+    private var tabs: some View {
         TabView {
             GeneralTab(appState: appState, stats: stats, launchAtLoginManager: launchAtLoginManager)
                 .tabItem { Label(String(localized: "settings.tab.general"), systemImage: "gearshape") }
@@ -48,10 +68,6 @@ struct SettingsView: View {
             AboutTab()
                 .tabItem { Label(String(localized: "settings.tab.about"), systemImage: "info.circle") }
         }
-        // Height accommodates the tallest tab — Dictionaries — which now includes the system
-        // dictionary status header above the per-language editor. Smaller heights would clip
-        // the editor's footer (entry counter + import button).
-        .frame(width: 600, height: 700)
     }
 }
 

@@ -11,6 +11,7 @@ final class StatusItemController: NSObject {
     private let presentationDetector: PresentationModeDetector?
     private let openSettings: () -> Void
     private let openOnboarding: () -> Void
+    private let openHelp: () -> Void
     private var isSecureTextField = false
     private var isSecureInputGlobal = false
     private var lastLanguageCode: String?
@@ -22,7 +23,8 @@ final class StatusItemController: NSObject {
         exclusions: ExclusionList,
         presentationDetector: PresentationModeDetector? = nil,
         openSettings: @escaping () -> Void,
-        openOnboarding: @escaping () -> Void
+        openOnboarding: @escaping () -> Void,
+        openHelp: @escaping () -> Void
     ) {
         self.appState = appState
         self.permission = permission
@@ -31,6 +33,7 @@ final class StatusItemController: NSObject {
         self.presentationDetector = presentationDetector
         self.openSettings = openSettings
         self.openOnboarding = openOnboarding
+        self.openHelp = openHelp
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -165,6 +168,14 @@ final class StatusItemController: NSObject {
         prefsItem.target = self
         menu.addItem(prefsItem)
 
+        let helpItem = NSMenuItem(
+            title: String(localized: "statusitem.menu.help"),
+            action: #selector(openHelpWindow),
+            keyEquivalent: "?"
+        )
+        helpItem.target = self
+        menu.addItem(helpItem)
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
@@ -225,6 +236,10 @@ final class StatusItemController: NSObject {
 
     @objc private func openSetup() {
         openOnboarding()
+    }
+
+    @objc private func openHelpWindow() {
+        openHelp()
     }
 
     @objc private func quit() {

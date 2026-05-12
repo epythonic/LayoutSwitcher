@@ -18,6 +18,7 @@ final class SettingsWindowController: NSObject {
     private let recents: RecentSwitches
     private let learningCache: LearningCache
     private let launchAtLoginManager: LaunchAtLoginManager
+    private let openHelp: () -> Void
 
     /// Creates settings window controller with all shared state dependencies.
     init(
@@ -33,7 +34,8 @@ final class SettingsWindowController: NSObject {
         perAppLayouts: PerAppLayoutPreferences,
         recents: RecentSwitches,
         learningCache: LearningCache,
-        launchAtLoginManager: LaunchAtLoginManager
+        launchAtLoginManager: LaunchAtLoginManager,
+        openHelp: @escaping () -> Void
     ) {
         self.appState = appState
         self.exclusions = exclusions
@@ -48,6 +50,7 @@ final class SettingsWindowController: NSObject {
         self.recents = recents
         self.learningCache = learningCache
         self.launchAtLoginManager = launchAtLoginManager
+        self.openHelp = openHelp
     }
 
     /// Opens preferences window or brings existing one to front.
@@ -71,7 +74,8 @@ final class SettingsWindowController: NSObject {
             perAppLayouts: perAppLayouts,
             recents: recents,
             learningCache: learningCache,
-            launchAtLoginManager: launchAtLoginManager
+            launchAtLoginManager: launchAtLoginManager,
+            openHelp: openHelp
         )
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)

@@ -46,6 +46,37 @@ Câmpurile securizate sunt sărite complet. Când focusul este într-un câmp de
 
 Buffer-ul se resetează și la schimbări de focus, clicuri de mouse, scurtături cu modificatori și alte interacțiuni care fac poziția textului nesigură.
 
+## extending-corrections
+
+LayoutSwitcher poate corecta nu doar un cuvânt, ci mai multe cuvinte consecutive dacă împreună formează o serie clară „în aranjament greșit".
+
+Retastare secvențială (mereu activă):
+Când tastezi două sau trei cuvinte la rând în aranjament greșit, separate prin spații unice, și fiecare este în mod sigur o comutare în sine, aplicația le îmbină într-o singură operație de ștergere-și-retastare, în loc să se declanșeze pentru fiecare cuvânt. Înlocuirea acoperă întreaga serie plus separatorul final.
+
+Auto-extend recent ambiguous words (opțional):
+Activabil în Preferences → Detection. Când un cuvânt mai lung declanșează o comutare, pipeline-ul se uită înapoi la cuvintele recent comise și include pe acelea care erau ambigue în sine dar aparțin clar aceleiași limbi ca declanșatorul.
+
+Exemplu cu butonul activat:
+• Tastezi "z nt,t " pe aranjamentul englez.
+• "z" singur este prea scurt pentru o decizie sigură, deci se comite ca ambiguu.
+• "nt,t" se citește clar ca rusescul „тебе" și declanșează comutarea.
+• Auto-extend reevaluează "z" cu corecția single-char activată, vede corespondența cu „я" și îl include în înlocuire.
+• Rezultat: „я тебе ".
+
+Fără buton, doar cuvântul declanșator este retastat, iar "z" rămâne așa cum era.
+
+Constrângeri pentru auto-extend:
+• Până la patru cuvinte anterioare într-o fereastră de două secunde.
+• Aceeași aplicație în focus — schimbarea aplicației oprește parcurgerea.
+• Cuvintele trebuie separate doar prin spații obișnuite — Enter, Tab sau punctuația de sfârșit de propoziție opresc parcurgerea.
+• Cuvintele deja comutate automat sunt ignorate.
+
+Convert single-character words (opțional, buton separat):
+Când este activ, detectorul live corectează și un cuvânt de o singură literă chiar în momentul fixării separatorului, fără să fie nevoie de un declanșator vecin. Util pentru „я", „a", „и", „o" și particule similare.
+
+Soluție manuală:
+Dacă vrei să corectezi o propoziție pe care pipeline-ul automat a ratat-o — de exemplu un paragraf mai vechi, sau unul care conține punctuație pe care detectorul o tratează ca limită — apasă scurtătura Convert last sentence. Aceasta se întoarce de la ultimul cuvânt până la limita anterioară de propoziție și convertește seria finală cu modul agresiv single-character.
+
 ## manual-actions
 
 Scurtăturile implicite curente:

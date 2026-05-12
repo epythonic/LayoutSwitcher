@@ -94,6 +94,18 @@ enum HelpContent {
             summaryUK: "Що відбувається після межі слова."
         ),
         HelpSection(
+            id: "extending-corrections",
+            systemImage: "arrow.left.and.line.vertical.and.arrow.right",
+            titleEN: "Extending Corrections to Neighbors",
+            titleRU: "Расширение коррекций на соседние слова",
+            titleRO: "Extinderea corecțiilor la vecini",
+            titleUK: "Розширення виправлень на сусідні слова",
+            summaryEN: "Multi-word bursts and the optional retroactive pull-in.",
+            summaryRU: "Многословные залпы и опциональный ретроактивный захват.",
+            summaryRO: "Burst-uri multi-cuvânt și captarea retroactivă opțională.",
+            summaryUK: "Багатослівні залпи та опціональний ретроактивний захват."
+        ),
+        HelpSection(
             id: "manual-actions",
             systemImage: "command",
             titleEN: "Manual Actions and Hotkeys",

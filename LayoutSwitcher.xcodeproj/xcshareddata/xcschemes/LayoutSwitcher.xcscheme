@@ -28,8 +28,6 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
-      <TestPlans>
-      </TestPlans>
       <Testables>
          <TestableReference
             skipped = "NO">

@@ -46,6 +46,37 @@ Secure text fields are skipped entirely. When the focused element is a password 
 
 The app also stops/reset buffers on focus changes, mouse clicks, modifier shortcuts, and other interactions that make the current text position uncertain.
 
+## extending-corrections
+
+LayoutSwitcher can correct more than one word at a time when adjacent words form a clear wrong-layout burst.
+
+Sequence retype (always on):
+When you keep typing two or three wrong-layout words in a row, separated by single spaces, and each one is confidently a switch on its own, the app merges them into one continuous erase-and-retype rather than firing per word. The replacement covers the whole run plus the final separator.
+
+Auto-extend recent ambiguous words (opt-in):
+Enable this in Preferences → Detection. When a long word triggers a switch, the pipeline looks back at the words you committed just before it and pulls in any that were ambiguous on their own but unambiguously belong to the same language as the trigger.
+
+Example with the toggle on:
+• You type "z nt,t " on the English layout.
+• "z" alone is too short for a confident decision, so it commits as ambiguous.
+• "nt,t" reads cleanly as Russian "тебе" and triggers the switch.
+• Auto-extend re-evaluates "z" with single-character correction enabled, sees it maps to Russian "я", and includes it in the replacement.
+• Result: "я тебе ".
+
+Without the toggle, only the trigger word is retyped and "z" remains as it was.
+
+Constraints on auto-extend:
+• Up to four prior words within a two-second window.
+• Same focused app — switching apps stops the walk.
+• Words must be separated by plain spaces — Enter, Tab, or sentence-ending punctuation stop the walk.
+• Already auto-switched words are skipped.
+
+Convert single-character words (opt-in, separate toggle):
+When this is on, the live detector also corrects a standalone single-character word the moment its separator commits, without needing a neighboring trigger. Useful for "я", "a", "и", "o", and similar particles.
+
+Manual fallback:
+If you want to correct a sentence the automatic pipeline missed — for example an older paragraph, or one that includes punctuation the detector treats as a boundary — press the Convert last sentence hotkey. It walks back from the latest word to the previous sentence break and converts the trailing run, using aggressive single-character mode.
+
 ## manual-actions
 
 Current default hotkeys:

@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItemController: StatusItemController?
     private var settingsWindowController: SettingsWindowController?
     private var onboardingWindowController: OnboardingWindowController?
+    private let helpWindowController = HelpWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -136,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appState.launchAtLogin = systemLaunchAtLoginEnabled
         }
 
+        let helpController = self.helpWindowController
         let settingsController = SettingsWindowController(
             appState: appState,
             exclusions: exclusions,
@@ -149,7 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             perAppLayouts: perAppLayouts,
             recents: recents,
             learningCache: learningCache,
-            launchAtLoginManager: launchAtLoginManager
+            launchAtLoginManager: launchAtLoginManager,
+            openHelp: { [weak helpController] in helpController?.show() }
         )
         self.settingsWindowController = settingsController
 
@@ -178,6 +181,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             openOnboarding: { [weak onboardingController] in
                 onboardingController?.show()
+            },
+            openHelp: { [weak helpController] in
+                helpController?.show()
             }
         )
         pipeline.focusContextDidChange = { [weak self] in
