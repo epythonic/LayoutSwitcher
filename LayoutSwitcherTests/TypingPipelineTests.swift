@@ -511,6 +511,34 @@ struct TypingPipelineTests {
         #expect(fixture.output.selectedLayouts.contains("com.apple.keylayout.RussianWin"))
     }
 
+    @Test func autoExtendIncludesSingleCharBeforeWordWithInternalAmbiguousPunctuation() async {
+        let fixture = Self.makeFixture(retypeSucceeds: true)
+        fixture.appState.correctSingleCharacterWords = false
+        fixture.appState.autoExtendRecentAmbiguous = true
+        let initialSwitches = fixture.stats.autoSwitchesTotal
+
+        // Exact reproduction of the reported scenario: "z nt,z " typed on EN.
+        // "z" (kc 6) commits as ambiguous on the first space.
+        // "nt,z" (kc 45/17/43/6) — the ',' (kc 43) is an ambiguous-internal char that
+        // TokenBoundaryPolicy keeps inside the word. The 4-char buffer renders as
+        // Russian "тебя" and triggers .switchAndRetype.
+        // With auto-extend on, the burst should pull "z" in too → "я тебя".
+        for event in [
+            Self.key(6, "z"), Self.key(49, " "),
+            Self.key(45, "n"), Self.key(17, "t"), Self.key(43, ","), Self.key(6, "z"),
+            Self.key(49, " ")
+        ] {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitUntil(timeoutNanoseconds: 2_000_000_000) {
+            fixture.stats.autoSwitchesTotal > initialSwitches && !fixture.pipeline.isRetyping
+        }
+
+        #expect(fixture.recents.entries.first?.original == "z nt,z")
+        #expect(fixture.recents.entries.first?.corrected == "я тебя")
+    }
+
     @Test func autoExtendDisabledOnlyRetypesCurrentWord() async {
         let fixture = Self.makeFixture(retypeSucceeds: true)
         fixture.appState.correctSingleCharacterWords = false
