@@ -72,12 +72,20 @@ struct RetyperTests {
     }
 
     @Test func romanianDiacriticsAreEncodedWithTargetLayoutData() async {
+        // Requires the system Romanian Standard layout binary (UCKeyTranslate
+        // operates on the real .keylayout data). On a host without it (e.g. CI)
+        // the test is silently skipped.
+        let sources = InputSourceManager()
+        guard sources.keyboardLayouts().contains(where: { $0.id == "com.apple.keylayout.Romanian-Standard" }) else {
+            return
+        }
+
         var posted: [(CGKeyCode, CGEventFlags)] = []
         var postedUnicode: [String] = []
 
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: InputSourceManager(),
+            inputSources: sources,
             currentLayoutIDProvider: { "com.apple.keylayout.Romanian-Standard" },
             refreshCurrentLayout: {},
             sleep: { _ in },
@@ -162,6 +170,9 @@ struct RetyperTests {
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
             inputSources: InputSourceManager(),
+            enabledLayoutsProvider: {
+                [RetypeInputSource(id: "com.apple.keylayout.RussianWin", primaryLanguage: "ru")]
+            },
             currentLayoutIDProvider: { "com.apple.keylayout.RussianWin" },
             refreshCurrentLayout: {},
             sleep: { _ in },
@@ -189,6 +200,9 @@ struct RetyperTests {
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
             inputSources: InputSourceManager(),
+            enabledLayoutsProvider: {
+                [RetypeInputSource(id: "com.apple.keylayout.RussianWin", primaryLanguage: "ru")]
+            },
             currentLayoutIDProvider: { "com.apple.keylayout.RussianWin" },
             refreshCurrentLayout: {},
             sleep: { _ in },
