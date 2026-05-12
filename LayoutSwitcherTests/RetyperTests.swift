@@ -72,11 +72,12 @@ struct RetyperTests {
     }
 
     @Test func romanianDiacriticsAreEncodedWithTargetLayoutData() async {
-        // Requires the system Romanian Standard layout binary (UCKeyTranslate
-        // operates on the real .keylayout data). On a host without it (e.g. CI)
-        // the test is silently skipped.
+        // Requires the system Romanian Standard layout to be *enabled* — UCKeyTranslate
+        // needs the real .keylayout binary which is only exposed for enabled sources.
+        // On a host where the layout is installed but disabled (e.g. CI) the test
+        // is silently skipped.
         let sources = InputSourceManager()
-        guard sources.keyboardLayouts().contains(where: { $0.id == "com.apple.keylayout.Romanian-Standard" }) else {
+        guard sources.enabledLayouts().contains(where: { $0.id == "com.apple.keylayout.Romanian-Standard" }) else {
             return
         }
 
