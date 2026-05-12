@@ -17,5 +17,5 @@ Package.resolved
 .vscode/
 .idea/
 
-# Claude Code (local agent state)
+# Local agent / tooling state
 .claude/
