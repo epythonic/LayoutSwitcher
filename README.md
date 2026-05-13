@@ -77,7 +77,13 @@ On first launch the app:
 
 For tester builds, the app may be distributed as a `LayoutSwitcher.dmg` file outside the Mac App Store.
 
-1. Download or receive `LayoutSwitcher.dmg`.
+Current tester release:
+
+```text
+https://github.com/efanchik/LayoutSwitcher/releases/tag/v0.1.0-test.1
+```
+
+1. Open the release page above and download `LayoutSwitcher.dmg` from the `Assets` section.
 2. Double-click the DMG file to mount it.
 3. Drag `LayoutSwitcher.app` to your `Applications` folder.
 4. Eject the mounted `LayoutSwitcher` disk image.
