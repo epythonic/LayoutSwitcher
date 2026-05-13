@@ -8,11 +8,18 @@ import os
 @Observable
 final class ExclusionList {
     private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Exclusions")
-    private static let defaultsKey = "exclusionBundleIDs"
+    private static let defaultsKey = "exclusions.bundleIDs"
+    private static let legacyDefaultsKey = "exclusionBundleIDs"
+    private static let defaultSeedAppliedKey = "exclusions.defaultSeedApplied"
 
-    /// Baseline excluded bundle identifiers (terminals, IDEs, password managers, this app).
+    /// Recommended bundle identifiers seeded once on first launch.
     static let defaults: Set<String> = [
         "com.apple.Terminal",
+        "com.apple.Console",
+        "com.apple.ActivityMonitor",
+        "com.apple.ScriptEditor2",
+        "com.apple.Automator",
+        "com.apple.shortcuts",
         "com.googlecode.iterm2",
         "com.microsoft.VSCode",
         "com.sublimetext.4",
@@ -26,16 +33,26 @@ final class ExclusionList {
     ]
 
     private(set) var bundleIDs: Set<String>
-    private let defaults: UserDefaults
+    private let userDefaults: UserDefaults
+    private let localizedNameProvider: @MainActor (String) -> String?
 
-    /// Loads persisted exclusions or initializes with default set.
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        if let stored = defaults.array(forKey: Self.defaultsKey) as? [String] {
-            self.bundleIDs = Set(stored)
+    /// Loads persisted exclusions or seeds the first-run recommended set.
+    init(
+        defaults: UserDefaults = .standard,
+        localizedNameProvider: @escaping @MainActor (String) -> String? = ExclusionList.localizedName(for:)
+    ) {
+        self.userDefaults = defaults
+        self.localizedNameProvider = localizedNameProvider
+        if let stored = Self.loadBundleIDs(from: defaults) {
+            self.bundleIDs = stored
+            Self.markDefaultSeedApplied(in: defaults)
+        } else if defaults.bool(forKey: Self.defaultSeedAppliedKey) {
+            self.bundleIDs = []
+            persist()
         } else {
             self.bundleIDs = Self.defaults
             persist()
+            Self.markDefaultSeedApplied(in: defaults)
         }
     }
 
@@ -61,7 +78,7 @@ final class ExclusionList {
     /// Returns exclusions sorted with localized app names for settings UI.
     func sortedEntries() -> [(bundleID: String, name: String)] {
         bundleIDs.sorted().map { id in
-            (id, Self.localizedName(for: id) ?? id)
+            (id, localizedNameProvider(id) ?? id)
         }
     }
 
@@ -77,6 +94,23 @@ final class ExclusionList {
 
     /// Persists exclusion list to `UserDefaults`.
     private func persist() {
-        defaults.set(Array(bundleIDs), forKey: Self.defaultsKey)
+        userDefaults.set(Array(bundleIDs), forKey: Self.defaultsKey)
+        userDefaults.removeObject(forKey: Self.legacyDefaultsKey)
+    }
+
+    private static func loadBundleIDs(from defaults: UserDefaults) -> Set<String>? {
+        if let stored = defaults.array(forKey: Self.defaultsKey) as? [String] {
+            return Set(stored)
+        }
+        guard let legacy = defaults.array(forKey: Self.legacyDefaultsKey) as? [String] else {
+            return nil
+        }
+        let migrated = Set(legacy)
+        defaults.set(Array(migrated), forKey: Self.defaultsKey)
+        return migrated
+    }
+
+    private static func markDefaultSeedApplied(in defaults: UserDefaults) {
+        defaults.set(true, forKey: Self.defaultSeedAppliedKey)
     }
 }

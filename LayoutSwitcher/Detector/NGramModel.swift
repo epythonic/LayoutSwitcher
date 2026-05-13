@@ -1,7 +1,7 @@
 import Foundation
 
 /// Character-bigram language model with add-one Laplace smoothing.
-struct NGramModel {
+struct NGramModel: Sendable {
     static let boundary: Character = "^"
     static let alpha: Double = 1.0
 

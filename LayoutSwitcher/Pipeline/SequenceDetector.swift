@@ -3,7 +3,7 @@ import Foundation
 /// A word that has been classified as needing layout retype but is being
 /// held briefly in case more retype-eligible words follow. Multi-word bursts
 /// are coalesced into a single retype block.
-struct PendingRetypeCandidate {
+struct PendingRetypeCandidate: Sendable {
     let word: CommittedWord
     let activeLanguage: LanguageID
     let targetLanguage: LanguageID

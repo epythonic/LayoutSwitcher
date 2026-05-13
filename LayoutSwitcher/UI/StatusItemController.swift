@@ -48,7 +48,7 @@ final class StatusItemController: NSObject {
         }
         button.image = statusImage(for: appState.currentLayoutID)
         button.imagePosition = .imageLeft
-        button.title = "LS"
+        button.title = ""
         button.toolTip = String(localized: "settings.about.title")
     }
 

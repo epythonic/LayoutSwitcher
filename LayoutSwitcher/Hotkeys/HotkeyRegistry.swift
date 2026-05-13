@@ -3,7 +3,7 @@ import Foundation
 import Observation
 
 /// Supported user-triggered hotkey actions.
-enum HotkeyAction: Hashable {
+enum HotkeyAction: Hashable, Sendable {
     case manualToggleLast
     case convertLastSentence
     case undoLastAutoSwitch
@@ -102,12 +102,12 @@ enum HotkeyAction: Hashable {
 }
 
 /// Key + modifier combination that maps to one `HotkeyAction`.
-struct HotkeyDefinition: Hashable {
+struct HotkeyDefinition: Hashable, Sendable {
     let keyCode: CGKeyCode
     let modifiers: ModifierMask
 
     /// Platform-agnostic modifier mask used for persisted / comparable hotkey definitions.
-    struct ModifierMask: OptionSet, Hashable {
+    struct ModifierMask: OptionSet, Hashable, Sendable {
         let rawValue: UInt64
         static let control = ModifierMask(rawValue: 1 << 0)
         static let option  = ModifierMask(rawValue: 1 << 1)

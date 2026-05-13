@@ -46,9 +46,10 @@ struct HotkeyCoordinatorTests {
         currentLayoutID: String = "com.apple.keylayout.ABC",
         currentBundleID: String = "com.test.app",
         retypeSucceeds: Bool = true,
-        activeLanguage: LanguageID = .en
+        activeLanguage: LanguageID = .en,
+        currentDate: Date = Date(timeIntervalSinceReferenceDate: 1_000)
     ) -> Fixture {
-        let buffer = WordBuffer()
+        let buffer = WordBuffer(now: { currentDate })
         let isolatedDefaults = UserDefaults(suiteName: "HotkeyCoordinatorTests-\(UUID().uuidString)") ?? .standard
         let stats = UsageStats(defaults: isolatedDefaults)
         let recents = RecentSwitches(defaults: isolatedDefaults)
@@ -82,7 +83,7 @@ struct HotkeyCoordinatorTests {
             appState: appState,
             currentBundleIDProvider: { currentBundleID },
             activeLanguageProvider: { activeLanguage },
-            now: Date.init
+            now: { currentDate }
         ), buffer: buffer, stats: stats, recents: recents, appState: appState, layoutState: layoutState)
         return output
     }
@@ -101,9 +102,13 @@ struct HotkeyCoordinatorTests {
         var elapsed: UInt64 = 0
         while elapsed < timeoutNanoseconds {
             if condition() { return }
-            try? await Task.sleep(nanoseconds: step)
+            await Self.waitForPollingStep(nanoseconds: step)
             elapsed += step
         }
+    }
+
+    private static func waitForPollingStep(nanoseconds: UInt64) async {
+        await Task.yield()
     }
 
     @Test func manualToggleRetypesLastCommittedWord() async {

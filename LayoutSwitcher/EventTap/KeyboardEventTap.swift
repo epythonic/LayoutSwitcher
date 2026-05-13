@@ -90,8 +90,28 @@ final class KeyboardEventTap {
     private static let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
         guard let refcon else { return Unmanaged.passUnretained(event) }
         let tap = Unmanaged<KeyboardEventTap>.fromOpaque(refcon).takeUnretainedValue()
-        return MainActor.assumeIsolated {
+        guard Thread.isMainThread else {
+            KeyboardEventTap.logger.fault("Event tap callback arrived off the main thread; passing event through")
+            return Unmanaged.passUnretained(event)
+        }
+        return handleSynchronousMainRunLoopCallback(tap: tap, type: type, event: event)
+            ?? Unmanaged.passUnretained(event)
+    }
+
+    /// Bridges the synchronous CGEvent callback into the main-actor event handler.
+    ///
+    /// The tap is installed on `CFRunLoopGetMain()` and the caller checks
+    /// `Thread.isMainThread` first. This path must stay synchronous because
+    /// returning `nil` is how hotkey events are consumed before the system sees
+    /// them; replacing it with `Task { @MainActor ... }` would pass the event
+    /// through before the hotkey decision is available.
+    nonisolated private static func handleSynchronousMainRunLoopCallback(
+        tap: KeyboardEventTap,
+        type: CGEventType,
+        event: CGEvent
+    ) -> Unmanaged<CGEvent>? {
+        MainActor.assumeIsolated {
             tap.handle(type: type, event: event)
-        } ?? Unmanaged.passUnretained(event)
+        }
     }
 }

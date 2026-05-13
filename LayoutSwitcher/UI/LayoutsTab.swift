@@ -6,6 +6,8 @@ struct LayoutsTab: View {
 
     /// Renders active layouts list and auto-detected language pairs.
     var body: some View {
+        let current = inputSources.currentSnapshot
+        let enabledLayouts = inputSources.enabledLayoutSnapshots()
         VStack(alignment: .leading, spacing: 12) {
             Text(String(localized: "settings.layouts.active-title"))
                 .font(.headline)
@@ -13,7 +15,7 @@ struct LayoutsTab: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            if let current = inputSources.current {
+            if let current {
                 LabeledContent(String(localized: "settings.layouts.current")) {
                     Text("\(current.localizedName) (\(current.primaryLanguage ?? "?"))")
                         .font(.body.monospaced())
@@ -21,10 +23,10 @@ struct LayoutsTab: View {
                 .padding(.vertical, 4)
             }
 
-            List(inputSources.enabledLayouts(), id: \.id) { source in
+            List(enabledLayouts, id: \.id) { source in
                 HStack(spacing: 12) {
                     Image(systemName: "keyboard")
-                        .foregroundStyle(source.id == inputSources.current?.id ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(source.id == current?.id ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(source.localizedName)
                         Text(source.id)
@@ -43,7 +45,7 @@ struct LayoutsTab: View {
             Text(String(localized: "settings.layouts.detected-pairs"))
                 .font(.headline)
                 .padding(.top, 8)
-            ForEach(LayoutPairResolver.autoDetect(from: inputSources.enabledLayouts()), id: \.languagePair) { pair in
+            ForEach(LayoutPairResolver.autoDetectSnapshots(from: enabledLayouts), id: \.languagePair) { pair in
                 HStack {
                     Text(pair.languagePair.rawValue.uppercased())
                         .font(.caption.bold())

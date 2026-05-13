@@ -8,17 +8,17 @@ enum BundledDictionaryLoader {
     /// Attempts to read `<resourceName>.txt` and convert lines into an in-memory dictionary.
     static func load(language: LanguageID, resourceName: String, bundle: Bundle = .main) -> InMemoryDictionary? {
         guard let url = bundle.url(forResource: resourceName, withExtension: "txt") else {
-            logger.notice("No bundled dictionary file for \(resourceName, privacy: .public).txt")
+            Self.logger.notice("No bundled dictionary file for \(resourceName, privacy: .public).txt")
             return nil
         }
         do {
             let raw = try String(contentsOf: url, encoding: .utf8)
             let words = raw.split(whereSeparator: { $0.isNewline }).map(String.init)
             let dict = InMemoryDictionary(language: language, words: words)
-            logger.info("Loaded \(dict.size, privacy: .public) words for \(language.rawValue, privacy: .public)")
+            Self.logger.info("Loaded \(dict.size, privacy: .public) words for \(language.rawValue, privacy: .public)")
             return dict
         } catch {
-            logger.error("Failed to load \(resourceName, privacy: .public).txt: \(String(describing: error), privacy: .public)")
+            Self.logger.error("Failed to load \(resourceName, privacy: .public).txt: \(String(describing: error), privacy: .public)")
             return nil
         }
     }

@@ -12,6 +12,7 @@ final class TypingPipeline {
     private let detector: LayoutDetector
     private let retyper: Retyper
     private let inputSources: any InputSourceManaging
+    private let now: @MainActor () -> Date
     let exclusions: ExclusionList
     let stats: UsageStats
     let recents: RecentSwitches
@@ -52,6 +53,7 @@ final class TypingPipeline {
         recents: RecentSwitches,
         perAppLayouts: PerAppLayoutPreferences? = nil,
         tunables: PipelineTunables = .default,
+        now: @escaping @MainActor () -> Date = Date.init,
         sleepBeforeSequenceFlush: @escaping @MainActor @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         }
@@ -61,6 +63,7 @@ final class TypingPipeline {
         self.detector = detector
         self.retyper = retyper
         self.inputSources = inputSources
+        self.now = now
         self.learningCache = learningCache
         self.presentationDetector = presentationDetector
         self.notificationManager = notificationManager
@@ -76,7 +79,8 @@ final class TypingPipeline {
             notificationManager: notificationManager,
             soundFeedback: soundFeedback,
             visualFeedback: visualFeedback,
-            tunables: tunables
+            tunables: tunables,
+            now: now
         )
         self.retypeDispatcher = dispatcher
         // committedHistoryProvider deferred to first read after `self` is fully built.
@@ -90,7 +94,8 @@ final class TypingPipeline {
             focused: focused,
             retypeDispatcher: dispatcher,
             tunables: tunables,
-            committedHistoryProvider: { historyProvider() }
+            committedHistoryProvider: { historyProvider() },
+            now: now
         )
         self.sequenceDetector = SequenceDetector(sleepBeforeFlush: sleepBeforeSequenceFlush)
 
@@ -275,7 +280,7 @@ final class TypingPipeline {
         activeLanguage: LanguageID
     ) -> [PendingRetypeCandidate] {
         var retroactive: [PendingRetypeCandidate] = []
-        let now = Date()
+        let currentTime = now()
         let currentBundleID = focused.bundleID
         Self.logger.info("auto-extend scan: history=\(self.committedHistory.count, privacy: .public) currentBundle=\(currentBundleID ?? "nil", privacy: .public) target=\(currentTarget.rawValue, privacy: .public)")
         for prior in committedHistory.dropLast().reversed() {
@@ -283,7 +288,7 @@ final class TypingPipeline {
                 Self.logger.info("auto-extend stop: max words reached")
                 break
             }
-            let age = now.timeIntervalSince(prior.committedAt)
+            let age = currentTime.timeIntervalSince(prior.committedAt)
             if age > tunables.autoExtendWindow {
                 Self.logger.info("auto-extend stop: age=\(age, privacy: .public)s > window=\(self.tunables.autoExtendWindow, privacy: .public)s")
                 break

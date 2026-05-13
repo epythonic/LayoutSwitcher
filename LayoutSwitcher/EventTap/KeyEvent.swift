@@ -2,9 +2,9 @@ import CoreGraphics
 import Foundation
 
 /// Normalized keyboard/mouse event payload consumed by the typing pipeline.
-struct KeyEvent {
+struct KeyEvent: Sendable {
     /// Coarse event category used by classifier and hotkey routing.
-    enum Kind: Equatable {
+    enum Kind: Equatable, Sendable {
         case keyDown
         case flagsChanged
         case leftMouseDown

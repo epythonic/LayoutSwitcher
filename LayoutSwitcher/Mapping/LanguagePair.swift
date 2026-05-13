@@ -1,7 +1,7 @@
 import Foundation
 
 /// Internal language identifier used by detector, dictionaries, and keyboard mapping.
-enum LanguageID: String, Hashable, CaseIterable {
+enum LanguageID: String, Hashable, CaseIterable, Sendable {
     case en
     case ru
     case uk
@@ -26,7 +26,7 @@ enum LanguageID: String, Hashable, CaseIterable {
 }
 
 /// Supported layout-switching pairs where English acts as alternate keyboard.
-enum LanguagePair: String, Hashable, CaseIterable {
+enum LanguagePair: String, Hashable, CaseIterable, Sendable {
     case ruEn
     case uaEn
     case roEn

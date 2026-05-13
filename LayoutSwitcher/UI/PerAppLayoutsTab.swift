@@ -29,11 +29,11 @@ struct PerAppLayoutsTab: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Picker("", selection: layoutBinding(for: entry.bundleID)) {
+                    Picker(String(localized: "settings.per-app-layouts.layout-picker"), selection: layoutBinding(for: entry.bundleID)) {
                         ForEach(availableLayouts, id: \.id) { layout in
                             Text(layout.localizedName).tag(layout.id)
                         }
-                        if !availableLayouts.contains(where: { $0.id == entry.layoutID }) {
+                        if !isAvailableLayout(entry.layoutID) {
                             Text(missingLabel(for: entry.layoutID)).tag(entry.layoutID)
                         }
                     }
@@ -59,8 +59,13 @@ struct PerAppLayoutsTab: View {
     }
 
     /// Layouts currently enabled in System Settings — eligible picker options.
-    private var availableLayouts: [InputSource] {
-        inputSources.enabledLayouts()
+    private var availableLayouts: [InputSourceSnapshot] {
+        inputSources.enabledLayoutSnapshots()
+    }
+
+    /// Returns true when a saved layout id still exists in enabled system layouts.
+    private func isAvailableLayout(_ layoutID: String) -> Bool {
+        inputSources.enabledLayoutSnapshot(id: layoutID) != nil
     }
 
     /// Two-way binding between a per-app entry and the preferences store.
@@ -93,7 +98,7 @@ struct PerAppLayoutsTab: View {
               let bundleID = Bundle(url: url)?.bundleIdentifier else {
             return
         }
-        let initialLayout = inputSources.current?.id ?? availableLayouts.first?.id ?? ""
+        let initialLayout = inputSources.currentSnapshot?.id ?? availableLayouts.first?.id ?? ""
         if !initialLayout.isEmpty {
             preferences.set(layoutID: initialLayout, for: bundleID)
         }

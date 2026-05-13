@@ -1,7 +1,7 @@
 import Foundation
 
 /// Expands plain Romanian words into diacritic variants based on known corpora.
-struct RomanianDiacriticResolver {
+struct RomanianDiacriticResolver: Sendable {
     private let variantsByPlain: [String: [String]]
 
     /// Builds resolver index from words containing valid Romanian diacritics.

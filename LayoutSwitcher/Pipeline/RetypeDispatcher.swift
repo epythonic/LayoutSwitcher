@@ -3,8 +3,8 @@ import os
 
 /// Cooldown record keyed by `(kind, original, corrected, source, target, bundleID)` used to
 /// suppress retype storms when the user keeps typing the same word.
-struct AutoSwitchCooldownEntry {
-    enum Kind {
+struct AutoSwitchCooldownEntry: Sendable {
+    enum Kind: Sendable {
         case single
         case sequence
     }
@@ -33,6 +33,7 @@ final class RetypeDispatcher {
     private let soundFeedback: SoundFeedbackPlayer?
     private let visualFeedback: VisualFeedbackPlayer?
     private let tunables: PipelineTunables
+    private let now: @MainActor () -> Date
     weak var appState: AppState?
     weak var hotkeyCoordinator: HotkeyCoordinator?
 
@@ -48,7 +49,8 @@ final class RetypeDispatcher {
         notificationManager: NotificationManager? = nil,
         soundFeedback: SoundFeedbackPlayer? = nil,
         visualFeedback: VisualFeedbackPlayer? = nil,
-        tunables: PipelineTunables = .default
+        tunables: PipelineTunables = .default,
+        now: @escaping @MainActor () -> Date = Date.init
     ) {
         self.retyper = retyper
         self.stats = stats
@@ -57,6 +59,7 @@ final class RetypeDispatcher {
         self.soundFeedback = soundFeedback
         self.visualFeedback = visualFeedback
         self.tunables = tunables
+        self.now = now
     }
 
     /// Routes a candidate batch to single- vs sequence-retype paths. Honors snooze.
@@ -108,11 +111,12 @@ final class RetypeDispatcher {
             sourceLanguage: candidate.activeLanguage,
             separator: word.separator,
             bundleID: word.bundleID,
-            timestamp: Date(),
+            timestamp: now(),
             originalText: candidate.originalText
         )
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.isRetyping = false }
             let result = await self.retyper.retypeResult(
                 original: word.characters,
                 corrected: candidate.corrected,
@@ -121,7 +125,6 @@ final class RetypeDispatcher {
                 separatorKeyCode: word.separatorKeyCode,
                 separatorFlags: word.separatorFlags
             )
-            self.isRetyping = false
             self.recordSuccessfulRetype(
                 result,
                 record: record,
@@ -160,11 +163,12 @@ final class RetypeDispatcher {
             sourceLanguage: last.activeLanguage,
             separator: last.word.separator,
             bundleID: last.word.bundleID,
-            timestamp: Date(),
+            timestamp: now(),
             originalText: originalText
         )
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.isRetyping = false }
             let result = await self.retyper.retypeSequenceResult(
                 original: originalCharacters,
                 corrected: correctedText,
@@ -173,7 +177,6 @@ final class RetypeDispatcher {
                 finalSeparatorKeyCode: last.word.separatorKeyCode,
                 finalSeparatorFlags: last.word.separatorFlags
             )
-            self.isRetyping = false
             self.recordSuccessfulRetype(
                 result,
                 record: record,
@@ -215,7 +218,7 @@ final class RetypeDispatcher {
             bundleID: bundleID,
             bundleName: bundleID.flatMap(ExclusionList.localizedName(for:)),
             kind: .auto,
-            timestamp: Date()
+            timestamp: now()
         ))
         notificationManager?.postAutoSwitchNotification(
             original: original,
@@ -256,8 +259,8 @@ final class RetypeDispatcher {
         bundleID: String?
     ) -> Bool {
         guard let entry = cooldownEntry else { return false }
-        let now = Date()
-        guard now < entry.expiresAt else {
+        let currentTime = now()
+        guard currentTime < entry.expiresAt else {
             cooldownEntry = nil
             return false
         }
@@ -284,7 +287,7 @@ final class RetypeDispatcher {
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
             bundleID: bundleID,
-            expiresAt: Date().addingTimeInterval(tunables.autoSwitchCooldown)
+            expiresAt: now().addingTimeInterval(tunables.autoSwitchCooldown)
         )
     }
 }

@@ -18,6 +18,7 @@ struct ExclusionsTab: View {
             List(exclusions.sortedEntries(), id: \.bundleID, selection: $selection) { entry in
                 HStack {
                     Image(systemName: "app.dashed")
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading) {
                         Text(entry.name)
                         Text(entry.bundleID)

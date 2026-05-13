@@ -12,11 +12,11 @@ final class SmartPaste {
     private static let maxClipboardLength = SelectionTextConverter.absoluteMaxSelectionLength
 
     private let inputSources: any InputSourceManaging
-    private let pasteboardRead: () -> String?
-    private let postKeyEvent: (CGKeyCode, CGEventFlags) -> Void
-    private let sleep: (UInt64) async -> Void
+    private let pasteboardRead: @MainActor () -> String?
+    private let postKeyEvent: @MainActor (CGKeyCode, CGEventFlags) -> Void
+    private let sleep: @MainActor (UInt64) async -> Void
 
-    enum Result: Equatable {
+    enum Result: Equatable, Sendable {
         case pasted(language: LanguageID, layoutSwitched: Bool)
         case clipboardEmpty
         case tooLong
@@ -44,9 +44,9 @@ final class SmartPaste {
     /// Test-only initializer with injected collaborators.
     init(
         inputSources: any InputSourceManaging,
-        pasteboardRead: @escaping () -> String?,
-        postKeyEvent: @escaping (CGKeyCode, CGEventFlags) -> Void,
-        sleep: @escaping (UInt64) async -> Void
+        pasteboardRead: @escaping @MainActor () -> String?,
+        postKeyEvent: @escaping @MainActor (CGKeyCode, CGEventFlags) -> Void,
+        sleep: @escaping @MainActor (UInt64) async -> Void
     ) {
         self.inputSources = inputSources
         self.pasteboardRead = pasteboardRead

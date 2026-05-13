@@ -6,9 +6,10 @@ final class LearningCache {
     private static let key = "learning.cache.entries"
     private static let maxEntries = 50
     private let defaults: UserDefaults
+    private let now: @MainActor () -> Date
 
     /// One learned suppression entry.
-    private struct Entry: Codable, Equatable {
+    private struct Entry: Codable, Equatable, Sendable {
         let original: String
         let corrected: String
         let sourceLanguage: String
@@ -18,7 +19,7 @@ final class LearningCache {
     }
 
     /// Public read-only representation of a learned entry for UI display.
-    struct LearnedEntry: Identifiable, Equatable {
+    struct LearnedEntry: Identifiable, Equatable, Sendable {
         let id = UUID()
         let original: String
         let corrected: String
@@ -43,8 +44,9 @@ final class LearningCache {
         }
     }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, now: @escaping @MainActor () -> Date = Date.init) {
         self.defaults = defaults
+        self.now = now
     }
 
     /// Records that the user undid a specific correction, so future identical
@@ -57,7 +59,7 @@ final class LearningCache {
             sourceLanguage: record.sourceLanguage.rawValue,
             targetLanguage: record.targetLanguage.rawValue,
             bundleID: record.bundleID,
-            timestamp: Date()
+            timestamp: now()
         )
         current.removeAll { $0 == entry }
         current.insert(entry, at: 0)

@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 
 /// Key emission tuple representing keycode and modifier flags.
-struct EncodedKey: Equatable {
+struct EncodedKey: Equatable, Sendable {
     let keyCode: CGKeyCode
     let flags: CGEventFlags
 }

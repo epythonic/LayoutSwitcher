@@ -11,11 +11,38 @@ final class UserDictionary: WordDictionary {
     private(set) var words: Set<String>
 
     private let storageURL: URL
+    private let createDirectory: @MainActor (URL) throws -> Void
+    private let fileExists: @MainActor (String) -> Bool
+    private let readData: @MainActor (URL) throws -> Data
+    private let writeData: @MainActor (Data, URL) throws -> Void
 
-    init(language: LanguageID, storageURL: URL? = nil) {
+    init(
+        language: LanguageID,
+        storageURL: URL? = nil,
+        storageURLProvider: @escaping @MainActor (LanguageID) -> URL = UserDictionary.fileURL(for:),
+        createDirectory: @escaping @MainActor (URL) throws -> Void = { url in
+            try FileManager.default.createDirectory(
+                at: url,
+                withIntermediateDirectories: true
+            )
+        },
+        fileExists: @escaping @MainActor (String) -> Bool = { path in
+            FileManager.default.fileExists(atPath: path)
+        },
+        readData: @escaping @MainActor (URL) throws -> Data = { url in
+            try Data(contentsOf: url)
+        },
+        writeData: @escaping @MainActor (Data, URL) throws -> Void = { data, url in
+            try data.write(to: url, options: .atomic)
+        }
+    ) {
         self.language = language
-        self.storageURL = storageURL ?? Self.fileURL(for: language)
-        self.words = Self.load(from: self.storageURL)
+        self.storageURL = storageURL ?? storageURLProvider(language)
+        self.createDirectory = createDirectory
+        self.fileExists = fileExists
+        self.readData = readData
+        self.writeData = writeData
+        self.words = Self.load(from: self.storageURL, fileExists: fileExists, readData: readData)
     }
 
     func contains(_ word: String) -> Bool {
@@ -54,27 +81,28 @@ final class UserDictionary: WordDictionary {
 
     private func persist() {
         do {
-            try FileManager.default.createDirectory(
-                at: storageURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+            try createDirectory(storageURL.deletingLastPathComponent())
             let payload = ["words": Array(words).sorted()]
             let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
-            try data.write(to: storageURL, options: .atomic)
+            try writeData(data, storageURL)
         } catch {
             Self.logger.error("Failed to persist user dictionary \(self.language.rawValue, privacy: .public): \(String(describing: error), privacy: .public)")
         }
     }
 
-    private static func load(from url: URL) -> Set<String> {
-        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+    private static func load(
+        from url: URL,
+        fileExists: @MainActor (String) -> Bool,
+        readData: @MainActor (URL) throws -> Data
+    ) -> Set<String> {
+        guard fileExists(url.path) else { return [] }
         do {
-            let data = try Data(contentsOf: url)
+            let data = try readData(url)
             let payload = try JSONSerialization.jsonObject(with: data) as? [String: [String]]
             let raw = payload?["words"] ?? []
             return Set(raw.map { InMemoryDictionary.normalize($0) }.filter { !$0.isEmpty })
         } catch {
-            logger.error("Failed to load user dictionary at \(url.path, privacy: .public): \(String(describing: error), privacy: .public)")
+            Self.logger.error("Failed to load user dictionary at \(url.path, privacy: .public): \(String(describing: error), privacy: .public)")
             return []
         }
     }

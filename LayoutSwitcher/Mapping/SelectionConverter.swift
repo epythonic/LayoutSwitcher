@@ -11,11 +11,11 @@ final class SelectionConverter {
 
     private let textConverter: SelectionTextConverter
     private let focused: FocusedAppObserving
-    private let focusedElementProvider: () -> AXUIElement?
-    private let pasteboardRead: () -> String?
-    private let pasteboardWrite: (String) -> Void
-    private let postKeyEvent: (CGKeyCode, CGEventFlags) -> Void
-    private let sleep: (UInt64) async -> Void
+    private let focusedElementProvider: @MainActor () -> AXUIElement?
+    private let pasteboardRead: @MainActor () -> String?
+    private let pasteboardWrite: @MainActor (String) -> Void
+    private let postKeyEvent: @MainActor (CGKeyCode, CGEventFlags) -> Void
+    private let sleep: @MainActor (UInt64) async -> Void
 
     init(mapping: any KeyboardMapping, focused: FocusedAppObserving) {
         self.textConverter = SelectionTextConverter(mapping: mapping)
@@ -30,10 +30,10 @@ final class SelectionConverter {
             )
             guard status == .success,
                   let element = focusedElement,
-                  CFGetTypeID(element) == AXUIElementGetTypeID() else {
+                  let axElement = AXElementBridge.element(from: element) else {
                 return nil
             }
-            return unsafeBitCast(element, to: AXUIElement.self)
+            return axElement
         }
         self.pasteboardRead = {
             NSPasteboard.general.string(forType: .string)
@@ -62,11 +62,11 @@ final class SelectionConverter {
     init(
         textConverter: SelectionTextConverter,
         focused: FocusedAppObserving,
-        focusedElementProvider: @escaping () -> AXUIElement?,
-        pasteboardRead: @escaping () -> String?,
-        pasteboardWrite: @escaping (String) -> Void,
-        postKeyEvent: @escaping (CGKeyCode, CGEventFlags) -> Void,
-        sleep: @escaping (UInt64) async -> Void
+        focusedElementProvider: @escaping @MainActor () -> AXUIElement?,
+        pasteboardRead: @escaping @MainActor () -> String?,
+        pasteboardWrite: @escaping @MainActor (String) -> Void,
+        postKeyEvent: @escaping @MainActor (CGKeyCode, CGEventFlags) -> Void,
+        sleep: @escaping @MainActor (UInt64) async -> Void
     ) {
         self.textConverter = textConverter
         self.focused = focused
@@ -77,23 +77,23 @@ final class SelectionConverter {
         self.sleep = sleep
     }
 
-    enum Result {
+    enum Result: Sendable {
         case success(conversion: Conversion, method: Method)
         case failure(Reason)
 
-        struct Conversion {
+        struct Conversion: Sendable {
             let sourceText: String
             let convertedText: String
             let sourceLanguage: LanguageID
             let targetLanguage: LanguageID
         }
 
-        enum Method {
+        enum Method: Sendable {
             case accessibility
             case clipboard
         }
 
-        enum Reason {
+        enum Reason: Sendable {
             case noSelection
             case emptyText
             case tooLong

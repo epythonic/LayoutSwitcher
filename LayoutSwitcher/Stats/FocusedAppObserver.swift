@@ -31,8 +31,7 @@ struct AXFocusedRoleProvider: FocusedRoleProviding {
         var focused: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused)
         guard status == .success, let element = focused else { return nil }
-        guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
-        let axElement = unsafeBitCast(element, to: AXUIElement.self)
+        guard let axElement = AXElementBridge.element(from: element) else { return nil }
 
         var role: CFTypeRef?
         let roleStatus = AXUIElementCopyAttributeValue(axElement, kAXRoleAttribute as CFString, &role)
@@ -40,6 +39,25 @@ struct AXFocusedRoleProvider: FocusedRoleProviding {
         return role as? String
     }
 }
+
+/// Metadata snapshot for the frontmost application.
+struct WorkspaceAppSnapshot: Equatable, Sendable {
+    let bundleID: String?
+    let localizedName: String?
+
+    nonisolated init(bundleID: String?, localizedName: String?) {
+        self.bundleID = bundleID
+        self.localizedName = localizedName
+    }
+
+    nonisolated init(app: NSRunningApplication) {
+        self.bundleID = app.bundleIdentifier
+        self.localizedName = app.localizedName
+    }
+}
+
+typealias WorkspaceActivationHandler = @MainActor (WorkspaceAppSnapshot) -> Void
+typealias WorkspaceActivationObserver = (@escaping WorkspaceActivationHandler) -> NSObjectProtocol?
 
 /// Observes frontmost app transitions and secure-input context for pipeline gating.
 @MainActor
@@ -54,43 +72,65 @@ final class FocusedAppObserver: FocusedAppObserving {
 
     private var observerToken: NSObjectProtocol?
     private let roleProvider: any FocusedRoleProviding
+    private let currentAppSnapshotProvider: @MainActor () -> WorkspaceAppSnapshot?
+    private let observeWorkspaceActivation: WorkspaceActivationObserver
+    private let removeWorkspaceObserver: (NSObjectProtocol) -> Void
 
-    /// Creates observer with injectable AX role provider (used by tests).
-    init(roleProvider: (any FocusedRoleProviding)? = nil) {
+    /// Creates observer with injectable system boundaries.
+    init(
+        roleProvider: (any FocusedRoleProviding)? = nil,
+        currentAppSnapshotProvider: @escaping @MainActor () -> WorkspaceAppSnapshot? = {
+            NSWorkspace.shared.frontmostApplication.map(WorkspaceAppSnapshot.init)
+        },
+        observeWorkspaceActivation: @escaping WorkspaceActivationObserver = { handler in
+            let center = NSWorkspace.shared.notificationCenter
+            return center.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { notification in
+                guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                    return
+                }
+                let snapshot = WorkspaceAppSnapshot(app: app)
+                Task { @MainActor in
+                    handler(snapshot)
+                }
+            }
+        },
+        removeWorkspaceObserver: @escaping (NSObjectProtocol) -> Void = { token in
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+        }
+    ) {
         self.roleProvider = roleProvider ?? AXFocusedRoleProvider()
+        self.currentAppSnapshotProvider = currentAppSnapshotProvider
+        self.observeWorkspaceActivation = observeWorkspaceActivation
+        self.removeWorkspaceObserver = removeWorkspaceObserver
     }
 
     /// Starts NSWorkspace frontmost-app observation and publishes initial state.
     func start() {
-        let center = NSWorkspace.shared.notificationCenter
-        observerToken = center.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            Task { @MainActor [weak self] in
-                self?.update(with: app)
-            }
+        observerToken = observeWorkspaceActivation { [weak self] snapshot in
+            self?.update(with: snapshot)
         }
 
-        if let app = NSWorkspace.shared.frontmostApplication {
-            update(with: app)
+        if let snapshot = currentAppSnapshotProvider() {
+            update(with: snapshot)
         }
     }
 
     /// Stops NSWorkspace observation.
     func stop() {
         if let token = observerToken {
-            NSWorkspace.shared.notificationCenter.removeObserver(token)
+            removeWorkspaceObserver(token)
             observerToken = nil
         }
     }
 
     /// Applies new focused app snapshot and notifies listeners.
-    private func update(with app: NSRunningApplication) {
-        bundleID = app.bundleIdentifier
-        localizedName = app.localizedName
+    private func update(with snapshot: WorkspaceAppSnapshot) {
+        bundleID = snapshot.bundleID
+        localizedName = snapshot.localizedName
         refreshSecureFieldState()
         Self.logger.debug(
             "Focused app: \(self.localizedName ?? "?", privacy: .public) [\(self.bundleID ?? "?", privacy: .public)] secure=\(self.isSecureField, privacy: .public)"

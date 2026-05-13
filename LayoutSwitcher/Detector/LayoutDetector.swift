@@ -2,7 +2,7 @@ import Foundation
 import os
 
 /// Decision emitted by detector for one committed word token.
-enum LayoutDecision: Equatable {
+enum LayoutDecision: Equatable, Sendable {
     case keep
     case switchAndRetype(corrected: String, target: LanguageID)
     case ambiguous(reason: String)

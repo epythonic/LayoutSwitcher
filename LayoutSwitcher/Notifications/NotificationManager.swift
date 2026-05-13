@@ -6,7 +6,7 @@ import os
 /// offering an inline "Undo" action that reverts the correction.
 @MainActor
 final class NotificationManager: NSObject {
-    static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Notifications")
+    nonisolated static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Notifications")
 
     /// Identifier for the auto-switch notification category.
     static let autoSwitchCategory = "autoSwitch"
@@ -14,18 +14,48 @@ final class NotificationManager: NSObject {
     static let undoActionIdentifier = "undoAction"
 
     /// Closure invoked when the user taps the Undo action on a notification.
-    var onUndoRequested: (() -> Void)?
+    var onUndoRequested: (@MainActor () -> Void)?
 
     private var pendingNotificationID: String?
+    private let setDelegate: (UNUserNotificationCenterDelegate?) -> Void
+    private let requestAuthorizationHandler: (@escaping @Sendable (Bool, Error?) -> Void) -> Void
+    private let setNotificationCategories: (Set<UNNotificationCategory>) -> Void
+    private let addNotificationRequest: (UNNotificationRequest, @escaping @Sendable (Error?) -> Void) -> Void
+    private let removeDeliveredNotifications: ([String]) -> Void
+    private let makeNotificationID: () -> String
 
-    override init() {
+    /// Creates a notification manager with injectable side-effect closures.
+    init(
+        setDelegate: @escaping (UNUserNotificationCenterDelegate?) -> Void = { delegate in
+            UNUserNotificationCenter.current().delegate = delegate
+        },
+        requestAuthorization: @escaping (@escaping @Sendable (Bool, Error?) -> Void) -> Void = { completion in
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound], completionHandler: completion)
+        },
+        setNotificationCategories: @escaping (Set<UNNotificationCategory>) -> Void = { categories in
+            UNUserNotificationCenter.current().setNotificationCategories(categories)
+        },
+        addNotificationRequest: @escaping (UNNotificationRequest, @escaping @Sendable (Error?) -> Void) -> Void = { request, completion in
+            UNUserNotificationCenter.current().add(request, withCompletionHandler: completion)
+        },
+        removeDeliveredNotifications: @escaping ([String]) -> Void = { identifiers in
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
+        },
+        makeNotificationID: @escaping () -> String = { UUID().uuidString }
+    ) {
+        self.setDelegate = setDelegate
+        self.requestAuthorizationHandler = requestAuthorization
+        self.setNotificationCategories = setNotificationCategories
+        self.addNotificationRequest = addNotificationRequest
+        self.removeDeliveredNotifications = removeDeliveredNotifications
+        self.makeNotificationID = makeNotificationID
         super.init()
-        UNUserNotificationCenter.current().delegate = self
+        self.setDelegate(self)
     }
 
     /// Requests authorization if not already granted.
     func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+        requestAuthorizationHandler { granted, error in
             if let error {
                 Self.logger.error("Notification authorization error: \(error.localizedDescription, privacy: .public)")
             } else {
@@ -47,12 +77,12 @@ final class NotificationManager: NSObject {
             intentIdentifiers: [],
             options: []
         )
-        UNUserNotificationCenter.current().setNotificationCategories([category])
+        setNotificationCategories([category])
     }
 
     /// Posts a notification for a successful auto-switch, embedding the record ID for undo.
     func postAutoSwitchNotification(original: String, corrected: String) {
-        let id = UUID().uuidString
+        let id = makeNotificationID()
         pendingNotificationID = id
 
         let content = UNMutableNotificationContent()
@@ -64,7 +94,7 @@ final class NotificationManager: NSObject {
         content.userInfo = ["original": original, "corrected": corrected]
 
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
+        addNotificationRequest(request) { error in
             if let error {
                 Self.logger.error("Failed to post notification: \(error.localizedDescription, privacy: .public)")
             }
@@ -74,7 +104,7 @@ final class NotificationManager: NSObject {
     /// Removes any pending auto-switch notification (e.g. after manual undo via hotkey).
     func clearPendingNotification() {
         if let id = pendingNotificationID {
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+            removeDeliveredNotifications([id])
             pendingNotificationID = nil
         }
     }

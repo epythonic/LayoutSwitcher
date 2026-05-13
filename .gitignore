@@ -7,6 +7,7 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 *.xcresult
+*.dmg
 
 # Swift Package Manager
 .swiftpm/

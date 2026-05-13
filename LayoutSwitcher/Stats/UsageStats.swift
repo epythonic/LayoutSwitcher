@@ -19,16 +19,18 @@ final class UsageStats {
 
     private var todayKey: String { didSet { persist() } }
     private let defaults: UserDefaults
+    private let now: @MainActor () -> Date
 
     /// Loads persisted counters and applies day rollover if needed.
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, now: @escaping @MainActor () -> Date = Date.init) {
         self.defaults = defaults
+        self.now = now
         let d = defaults
         self.autoSwitchesTotal     = d.integer(forKey: Self.prefix + "autoTotal")
         self.manualSwitchesTotal   = d.integer(forKey: Self.prefix + "manualTotal")
         self.wordsCommittedTotal   = d.integer(forKey: Self.prefix + "wordsTotal")
         self.charactersSavedTotal  = d.integer(forKey: Self.prefix + "charsTotal")
-        self.todayKey              = d.string(forKey: Self.prefix + "todayKey") ?? Self.dayString(Date())
+        self.todayKey              = d.string(forKey: Self.prefix + "todayKey") ?? Self.dayString(now())
         self.autoSwitchesToday     = d.integer(forKey: Self.prefix + "autoToday")
         self.manualSwitchesToday   = d.integer(forKey: Self.prefix + "manualToday")
         self.wordsCommittedToday   = d.integer(forKey: Self.prefix + "wordsToday")
@@ -69,7 +71,7 @@ final class UsageStats {
 
     /// Resets day-scoped counters when calendar day changes.
     private func rolloverIfNeeded() {
-        let current = Self.dayString(Date())
+        let current = Self.dayString(now())
         if current != todayKey {
             todayKey = current
             autoSwitchesToday = 0

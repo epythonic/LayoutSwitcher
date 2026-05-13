@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-enum SnoozeDuration: Int, CaseIterable {
+enum SnoozeDuration: Int, CaseIterable, Sendable {
     case fiveMinutes = 5
     case fifteenMinutes = 15
     case sixtyMinutes = 60
@@ -32,7 +32,7 @@ final class AppState {
     private static let snoozeDurationKey = "settings.snoozeDurationMinutes"
     private static let launchAtLoginKey = "settings.launchAtLogin"
     private let defaults: UserDefaults
-    private let now: () -> Date
+    private let now: @MainActor () -> Date
 
     var isEnabled: Bool = true
     var autoAddRomanianDiacritics: Bool {
@@ -85,7 +85,7 @@ final class AppState {
     var currentLayoutID: String?
     var lastActionDescription: String?
 
-    init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+    init(defaults: UserDefaults = .standard, now: @escaping @MainActor () -> Date = Date.init) {
         self.defaults = defaults
         self.now = now
         self.autoAddRomanianDiacritics = defaults.bool(forKey: Self.autoAddRomanianDiacriticsKey)

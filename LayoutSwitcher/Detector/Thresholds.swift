@@ -22,7 +22,7 @@ struct DetectionThresholds: Sendable {
 }
 
 /// User-facing detector aggressiveness presets.
-enum DetectionSensitivity: String, CaseIterable {
+enum DetectionSensitivity: String, CaseIterable, Sendable {
     case conservative
     case balanced
     case aggressive

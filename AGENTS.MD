@@ -6,8 +6,8 @@
 
 ## 1. Communication Language
 
-- **With the user:** Russian
-- **Code identifiers, comments, logs, documentation:** English only
+- **Chat with the user, documentation, audit and planing:** Russian
+- **Code identifiers, comments, logs:** English only
 - **User-facing strings:** Localized (en, ru, ro, uk via `Localizable.strings`)
 
 ---

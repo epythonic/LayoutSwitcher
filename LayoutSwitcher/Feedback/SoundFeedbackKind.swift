@@ -1,7 +1,7 @@
 import Foundation
 
 /// Available system sounds for automatic-switch feedback.
-enum SoundFeedbackKind: String, CaseIterable, Identifiable {
+enum SoundFeedbackKind: String, CaseIterable, Identifiable, Sendable {
     case tink
     case glass
 

@@ -25,3 +25,25 @@ protocol InputSourceManaging: AnyObject {
 }
 
 extension InputSourceManager: InputSourceManaging {}
+
+extension InputSourceManaging {
+    /// Current layout metadata without the live Carbon input-source reference.
+    var currentSnapshot: InputSourceSnapshot? {
+        current?.snapshot
+    }
+
+    /// All keyboard-layout metadata snapshots known to the system.
+    func keyboardLayoutSnapshots() -> [InputSourceSnapshot] {
+        keyboardLayouts().map(\.snapshot)
+    }
+
+    /// Enabled keyboard-layout metadata snapshots safe for UI/read-only use.
+    func enabledLayoutSnapshots() -> [InputSourceSnapshot] {
+        enabledLayouts().map(\.snapshot)
+    }
+
+    /// Finds enabled keyboard-layout metadata by stable input-source identifier.
+    func enabledLayoutSnapshot(id: String) -> InputSourceSnapshot? {
+        enabledLayoutSnapshots().first { $0.id == id }
+    }
+}

@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import LayoutSwitcher
 
@@ -17,5 +18,21 @@ struct StatusItemControllerTests {
     @Test func languageBadgeHandlesLongCodes() {
         #expect(StatusItemController.languageBadge("english") == "EN")
         #expect(StatusItemController.languageBadge("russian") == "RU")
+    }
+
+    @Test func statusBarLanguageIconIsTemplateImage() {
+        let image = StatusBarIconRenderer.image(for: .language(code: "ru"))
+
+        #expect(image.isTemplate)
+        #expect(image.size.width > 0)
+        #expect(image.size.height > 0)
+    }
+
+    @Test func statusBarFallbackIconIsTemplateImage() {
+        let image = StatusBarIconRenderer.image(for: .fallback)
+
+        #expect(image.isTemplate)
+        #expect(image.size.width > 0)
+        #expect(image.size.height > 0)
     }
 }

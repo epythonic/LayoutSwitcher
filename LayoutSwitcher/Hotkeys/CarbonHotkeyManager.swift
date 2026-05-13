@@ -128,8 +128,12 @@ final class CarbonHotkeyManager {
         }
         let manager = Unmanaged<CarbonHotkeyManager>.fromOpaque(userDataOpt).takeUnretainedValue()
         let id = hotKeyID.id
-        MainActor.assumeIsolated {
-            manager.dispatch(id: id)
+        guard Thread.isMainThread else {
+            CarbonHotkeyManager.logger.fault("Carbon hotkey callback arrived off the main thread; dropping action id=\(id, privacy: .public)")
+            return noErr
+        }
+        Task { @MainActor [weak manager] in
+            manager?.dispatch(id: id)
         }
         return noErr
     }

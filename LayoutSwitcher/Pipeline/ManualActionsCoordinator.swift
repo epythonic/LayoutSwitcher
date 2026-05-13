@@ -17,6 +17,7 @@ final class ManualActionsCoordinator {
     private let retypeDispatcher: RetypeDispatcher
     private let tunables: PipelineTunables
     private let committedHistoryProvider: () -> [CommittedWord]
+    private let now: @MainActor () -> Date
     weak var appState: AppState?
 
     /// Wires all collaborators. `committedHistoryProvider` is a closure so the
@@ -30,7 +31,8 @@ final class ManualActionsCoordinator {
         focused: FocusedAppObserver,
         retypeDispatcher: RetypeDispatcher,
         tunables: PipelineTunables,
-        committedHistoryProvider: @escaping () -> [CommittedWord]
+        committedHistoryProvider: @escaping () -> [CommittedWord],
+        now: @escaping @MainActor () -> Date = Date.init
     ) {
         self.detector = detector
         self.retyper = retyper
@@ -41,6 +43,7 @@ final class ManualActionsCoordinator {
         self.retypeDispatcher = retypeDispatcher
         self.tunables = tunables
         self.committedHistoryProvider = committedHistoryProvider
+        self.now = now
     }
 
     /// Manual override for the most-recent word that escaped auto-switch — re-runs
@@ -78,6 +81,7 @@ final class ManualActionsCoordinator {
             retypeDispatcher.setRetypingFlag(true)
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                defer { self.retypeDispatcher.setRetypingFlag(false) }
                 let result = await self.retyper.retypeResult(
                     original: word.characters,
                     corrected: corrected,
@@ -86,7 +90,6 @@ final class ManualActionsCoordinator {
                     separatorKeyCode: word.separatorKeyCode,
                     separatorFlags: word.separatorFlags
                 )
-                self.retypeDispatcher.setRetypingFlag(false)
                 if result.succeeded {
                     self.appState?.lastActionDescription = String(
                         format: String(localized: "pipeline.result.retyped"),
@@ -171,11 +174,11 @@ final class ManualActionsCoordinator {
     /// current sentence — stops at sentence-ending punctuation, app change,
     /// expiration, or word cap.
     private func collectLastSentenceWords() -> [CommittedWord] {
-        let now = Date()
+        let currentTime = now()
         let currentBundleID = focused.bundleID
         var collected: [CommittedWord] = []
         for (index, word) in committedHistoryProvider().reversed().enumerated() {
-            if now.timeIntervalSince(word.committedAt) > tunables.sentenceConvertMaxAge { break }
+            if currentTime.timeIntervalSince(word.committedAt) > tunables.sentenceConvertMaxAge { break }
             if word.bundleID != currentBundleID { break }
             if index > 0, case .punctuation(let c) = word.separator, tunables.sentenceEndingPunctuation.contains(c) {
                 break

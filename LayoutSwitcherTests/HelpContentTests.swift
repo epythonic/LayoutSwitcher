@@ -26,4 +26,40 @@ struct HelpContentTests {
         #expect(privacySection.bodyRU.contains("Синтетические события"))
         #expect(privacySection.bodyRU.contains("Настройках → Исключениях"))
     }
+
+    @Test func injectedHelpLoaderFallsBackToEnglishBody() {
+        var loader = HelpBodyLoader { language in
+            switch language {
+            case .en:
+                """
+                ## overview
+                English overview body
+                """
+            case .ru, .ro, .uk:
+                nil
+            }
+        }
+
+        let body = loader.body(for: "overview", language: .ru)
+
+        #expect(body == "English overview body")
+    }
+
+    @Test func injectedHelpLoaderCachesLoadedMarkdown() {
+        var loadCount = 0
+        var loader = HelpBodyLoader { _ in
+            loadCount += 1
+            return """
+            ## overview
+            Cached body
+            """
+        }
+
+        let first = loader.body(for: "overview", language: .en)
+        let second = loader.body(for: "overview", language: .en)
+
+        #expect(first == "Cached body")
+        #expect(second == "Cached body")
+        #expect(loadCount == 1)
+    }
 }

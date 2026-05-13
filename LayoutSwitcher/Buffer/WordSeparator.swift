@@ -1,7 +1,7 @@
 import CoreGraphics
 
 /// Token delimiters that finalize buffered word capture.
-enum WordSeparator: Equatable {
+enum WordSeparator: Equatable, Sendable {
     case space
     case enter
     case tab
@@ -9,7 +9,7 @@ enum WordSeparator: Equatable {
 }
 
 /// Reasons why current buffered token was reset.
-enum WordResetReason {
+enum WordResetReason: Sendable {
     case appChanged
     case mouseClick
     case navigation
@@ -19,7 +19,7 @@ enum WordResetReason {
 }
 
 /// High-level key categories used by pipeline state machine.
-enum KeyCodeKind: Equatable {
+enum KeyCodeKind: Equatable, Sendable {
     case letter
     case separator(WordSeparator)
     case backspace

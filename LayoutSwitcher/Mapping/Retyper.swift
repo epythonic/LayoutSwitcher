@@ -3,10 +3,18 @@ import CoreGraphics
 import Carbon.HIToolbox
 import os
 
+/// Keyboard input-source metadata used during synthetic retyping.
+///
+/// Test fixtures use identifier-only instances, while production instances may
+/// carry a live `InputSource` reference and cached keyboard layout data.
 struct RetypeInputSource: Equatable {
+    /// Stable system identifier for the keyboard input source.
     let id: String
+    /// Primary language reported by the input source, when available.
     let primaryLanguage: String?
+    /// Live system input source used only on the main actor for selection.
     fileprivate let source: InputSource?
+    /// Cached Unicode key layout data used to encode target characters.
     fileprivate let layoutData: Data?
 
     init(id: String, primaryLanguage: String?) {
@@ -31,19 +39,33 @@ struct RetypeInputSource: Equatable {
     }
 }
 
-enum RetypeFailureReason: Equatable {
+/// Explicit domain failure reasons for retype operations.
+///
+/// Failures are returned as data instead of thrown so callers can record,
+/// test, and branch on expected recoverable outcomes.
+enum RetypeFailureReason: Equatable, Sendable {
+    /// The original token contains no characters to replace.
     case emptyInput
+    /// Romanian diacritic correction was requested but no Romanian layout is enabled.
     case missingRomanianLayout
+    /// No enabled layout matches the requested target language.
     case missingTargetLayout(LanguageID)
+    /// A character could not be represented in the target layout.
     case unencodableCharacter(String, LanguageID)
+    /// Selecting the target input source failed with a system status code.
     case selectLayoutFailed(String, OSStatus)
+    /// The selected layout did not become current before the confirmation timeout.
     case layoutConfirmationTimedOut(String)
 }
 
-enum RetypeResult: Equatable {
+/// Result of a synthetic retype attempt.
+enum RetypeResult: Equatable, Sendable {
+    /// The retype completed and synthetic input was emitted.
     case success
+    /// The retype stopped before destructive input because a recoverable issue was detected.
     case failure(RetypeFailureReason)
 
+    /// Convenience flag used by legacy boolean call sites.
     var succeeded: Bool {
         if case .success = self { return true }
         return false
@@ -55,25 +77,25 @@ final class Retyper {
     static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Retyper")
 
     private let mapping: any KeyboardMapping
-    private let enabledLayoutsProvider: () -> [RetypeInputSource]
-    private let currentLayoutIDProvider: () -> String?
-    private let refreshCurrentLayout: () -> Void
-    private let selectLayout: (RetypeInputSource) -> OSStatus
-    private let sleep: (UInt64) async -> Void
-    private let postKeyEvent: (CGKeyCode, CGEventFlags) -> Void
-    private let postUnicodeEvent: (String) -> Void
+    private let enabledLayoutsProvider: @MainActor () -> [RetypeInputSource]
+    private let currentLayoutIDProvider: @MainActor () -> String?
+    private let refreshCurrentLayout: @MainActor () -> Void
+    private let selectLayout: @MainActor (RetypeInputSource) -> OSStatus
+    private let sleep: @MainActor (UInt64) async -> Void
+    private let postKeyEvent: @MainActor (CGKeyCode, CGEventFlags) -> Void
+    private let postUnicodeEvent: @MainActor (String) -> Void
     private let capsLockGuard: CapsLockGuard
 
     init(
         mapping: any KeyboardMapping,
         inputSources: any InputSourceManaging,
-        enabledLayoutsProvider: (() -> [RetypeInputSource])? = nil,
-        currentLayoutIDProvider: (() -> String?)? = nil,
-        refreshCurrentLayout: (() -> Void)? = nil,
-        selectLayout: ((RetypeInputSource) -> OSStatus)? = nil,
-        sleep: ((UInt64) async -> Void)? = nil,
-        postKeyEvent: ((CGKeyCode, CGEventFlags) -> Void)? = nil,
-        postUnicodeEvent: ((String) -> Void)? = nil,
+        enabledLayoutsProvider: (@MainActor () -> [RetypeInputSource])? = nil,
+        currentLayoutIDProvider: (@MainActor () -> String?)? = nil,
+        refreshCurrentLayout: (@MainActor () -> Void)? = nil,
+        selectLayout: (@MainActor (RetypeInputSource) -> OSStatus)? = nil,
+        sleep: (@MainActor (UInt64) async -> Void)? = nil,
+        postKeyEvent: (@MainActor (CGKeyCode, CGEventFlags) -> Void)? = nil,
+        postUnicodeEvent: (@MainActor (String) -> Void)? = nil,
         capsLockGuard: CapsLockGuard? = nil
     ) {
         self.mapping = mapping

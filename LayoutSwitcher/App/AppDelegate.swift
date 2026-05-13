@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let launchAtLoginManager = LaunchAtLoginManager()
     let notificationManager = NotificationManager()
     let secureInputObserver = SecureInputObserver()
+    private let onboardingCompletionStore: OnboardingCompletionStore
     let userEnglish = UserDictionary(language: .en)
     let userRussian = UserDictionary(language: .ru)
     let userUkrainian = UserDictionary(language: .uk)
@@ -66,6 +67,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var onboardingWindowController: OnboardingWindowController?
     private let helpWindowController = HelpWindowController()
 
+    override init() {
+        self.onboardingCompletionStore = OnboardingCompletionStore()
+        super.init()
+    }
+
+    init(onboardingCompletionStore: OnboardingCompletionStore) {
+        self.onboardingCompletionStore = onboardingCompletionStore
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
@@ -75,10 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusedApp.start()
         _ = pipeline
 
-        appState.currentLayoutID = inputSources.current?.localizedName
-        inputSources.onChange = { [weak self] source in
-            self?.appState.currentLayoutID = source?.localizedName
-            self?.statusItemController?.updateLayoutBadge(source?.primaryLanguage)
+        appState.currentLayoutID = inputSources.currentSnapshot?.localizedName
+        inputSources.onSnapshotChange = { [weak self] snapshot in
+            self?.appState.currentLayoutID = snapshot?.localizedName
+            self?.statusItemController?.updateLayoutBadge(snapshot?.primaryLanguage)
         }
         inputSources.startObservingSystemChanges()
 
@@ -93,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hotkeyCoordinator.onSnoozeChanged = { [weak self] in
             guard let self else { return }
-            self.statusItemController?.updateLayoutBadge(self.inputSources.current?.primaryLanguage)
+            self.statusItemController?.updateLayoutBadge(self.inputSources.currentSnapshot?.primaryLanguage)
         }
         hotkeyRegistry.onAction = { [weak self] action in
             self?.hotkeyCoordinator.handle(action)
@@ -161,9 +172,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             inputSources: inputSources,
             hotkeyRegistry: hotkeyRegistry,
             onFinish: { [weak self] in
-                UserDefaults.standard.set(true, forKey: "onboarding.completed")
-                if self?.permission.isTrusted == true {
-                    self?.eventTap.start()
+                guard let self else { return }
+                self.onboardingCompletionStore.markCompleted()
+                if self.permission.isTrusted {
+                    self.eventTap.start()
                     Self.logger.info("Onboarding finished — event tap started")
                 }
             }
@@ -189,10 +201,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline.focusContextDidChange = { [weak self] in
             guard let self else { return }
             statusItemController?.updateSecureTextFieldState(focusedApp.isSecureField)
-            statusItemController?.updateLayoutBadge(inputSources.current?.primaryLanguage)
+            statusItemController?.updateLayoutBadge(inputSources.currentSnapshot?.primaryLanguage)
         }
         statusItemController?.updateSecureTextFieldState(focusedApp.isSecureField)
-        statusItemController?.updateLayoutBadge(inputSources.current?.primaryLanguage)
+        statusItemController?.updateLayoutBadge(inputSources.currentSnapshot?.primaryLanguage)
 
         secureInputObserver.onChange = { [weak self] isSecure in
             self?.statusItemController?.updateGlobalSecureInputState(isSecure)
@@ -200,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         secureInputObserver.start()
         statusItemController?.updateGlobalSecureInputState(secureInputObserver.isSecureInputEnabled)
 
-        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "onboarding.completed")
+        let hasCompletedOnboarding = onboardingCompletionStore.isCompleted
         if !hasCompletedOnboarding {
             if !permission.isTrusted {
                 permission.startPolling()

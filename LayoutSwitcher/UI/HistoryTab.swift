@@ -6,9 +6,22 @@ struct HistoryTab: View {
     @Bindable var recents: RecentSwitches
     @State private var filter: KindFilter = .all
     @State private var appFilter: String = ""
+    private let clipboardWrite: @MainActor (String) -> Void
+
+    init(
+        recents: RecentSwitches,
+        clipboardWrite: @escaping @MainActor (String) -> Void = { payload in
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(payload, forType: .string)
+        }
+    ) {
+        self.recents = recents
+        self.clipboardWrite = clipboardWrite
+    }
 
     /// Filter selector for switch kind (auto / manual / all).
-    enum KindFilter: String, CaseIterable, Identifiable {
+    enum KindFilter: String, CaseIterable, Identifiable, Sendable {
         case all, auto, manual
         var id: Self { self }
 
@@ -117,17 +130,22 @@ struct HistoryTab: View {
 
     /// Serializes current filtered view to TSV-like text and copies onto pasteboard.
     private func copyToClipboard() {
+        clipboardWrite(Self.exportPayload(for: filteredEntries))
+    }
+
+    /// Builds TSV-like export payload for recent switch entries.
+    static func exportPayload(
+        for entries: [RecentSwitchEntry],
+        formatter: DateFormatter = Self.exportFormatter
+    ) -> String {
         let header = "time\tapp\toriginal\tcorrected\tkind"
-        let body = filteredEntries.map { entry in
-            let time = Self.exportFormatter.string(from: entry.timestamp)
+        let body = entries.map { entry in
+            let time = formatter.string(from: entry.timestamp)
             let app = entry.bundleName ?? entry.bundleID ?? ""
             let kind = entry.kind == .auto ? "auto" : "manual"
             return "\(time)\t\(app)\t\(entry.original)\t\(entry.corrected)\t\(kind)"
         }.joined(separator: "\n")
-        let payload = ([header] + [body]).joined(separator: "\n")
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(payload, forType: .string)
+        return ([header] + [body]).joined(separator: "\n")
     }
 
     private static let timestampFormatter: DateFormatter = {

@@ -29,8 +29,21 @@
 		614CEC322FA7A3990043AA04 /* LayoutSwitcherUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LayoutSwitcherUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		614CEC442FB49C9C0043AA04 /* Exceptions for "LayoutSwitcher" folder in "LayoutSwitcher" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				docs/Swift6CodeQualityAudit.md,
+			);
+			target = 614CEC182FA7A3980043AA04 /* LayoutSwitcher */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		614CEC1B2FA7A3980043AA04 /* LayoutSwitcher */ = {
+			exceptions = (
+				614CEC442FB49C9C0043AA04 /* Exceptions for "LayoutSwitcher" folder in "LayoutSwitcher" target */,
+			);
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = LayoutSwitcher;
 			sourceTree = "<group>";

@@ -3,7 +3,7 @@ import Observation
 import os
 
 /// Snapshot describing one successful auto/manual correction.
-struct RecentSwitchEntry: Identifiable, Codable {
+struct RecentSwitchEntry: Identifiable, Codable, Sendable {
     let id: UUID
     let original: String
     let corrected: String
@@ -13,7 +13,7 @@ struct RecentSwitchEntry: Identifiable, Codable {
     let timestamp: Date
 
     /// Indicates whether correction was initiated automatically or by hotkey.
-    enum Kind: String, Codable {
+    enum Kind: String, Codable, Sendable {
         case auto
         case manual
     }
@@ -43,7 +43,8 @@ struct RecentSwitchEntry: Identifiable, Codable {
 @Observable
 final class RecentSwitches {
     private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "RecentSwitches")
-    private static let defaultsKey = "recentSwitches"
+    private static let defaultsKey = "recentSwitches.entries"
+    private static let legacyDefaultsKey = "recentSwitches"
 
     private(set) var entries: [RecentSwitchEntry] = []
     private let capacity: Int = 200
@@ -74,17 +75,24 @@ final class RecentSwitches {
         do {
             let data = try JSONEncoder().encode(entries)
             defaults.set(data, forKey: Self.defaultsKey)
+            defaults.removeObject(forKey: Self.legacyDefaultsKey)
         } catch {
             Self.logger.error("persist failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     private static func load(from defaults: UserDefaults) -> [RecentSwitchEntry] {
-        guard let data = defaults.data(forKey: Self.defaultsKey) else { return [] }
+        guard let data = defaults.data(forKey: Self.defaultsKey) ?? defaults.data(forKey: Self.legacyDefaultsKey) else {
+            return []
+        }
         do {
-            return try JSONDecoder().decode([RecentSwitchEntry].self, from: data)
+            let entries = try JSONDecoder().decode([RecentSwitchEntry].self, from: data)
+            if defaults.data(forKey: Self.defaultsKey) == nil {
+                defaults.set(data, forKey: Self.defaultsKey)
+            }
+            return entries
         } catch {
-            logger.error("load failed: \(error.localizedDescription, privacy: .public)")
+            Self.logger.error("load failed: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }

@@ -80,7 +80,7 @@ struct TypingPipelineTests {
         for event in word {
             fixture.pipeline.handle(event)
         }
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        await Self.waitForAsyncWorkWindow(nanoseconds: 250_000_000)
 
         #expect(fixture.stats.autoSwitchesTotal == initialSwitches + 1)
         #expect(fixture.recents.entries.count == initialRecents + 1)
@@ -129,7 +129,7 @@ struct TypingPipelineTests {
             fixture.pipeline.handle(event)
         }
 
-        try? await Task.sleep(nanoseconds: 20_000_000)
+        await Self.waitForAsyncWorkWindow(nanoseconds: 20_000_000)
 
         #expect(fixture.stats.wordsCommittedTotal == initialWords)
         #expect(fixture.stats.autoSwitchesTotal == initialSwitches)
@@ -202,7 +202,7 @@ struct TypingPipelineTests {
             fixture.pipeline.handle(event)
         }
         fixture.appState.startSnooze()
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        await Self.waitForAsyncWorkWindow(nanoseconds: 250_000_000)
 
         #expect(fixture.stats.autoSwitchesTotal == initialSwitches)
         #expect(fixture.output.postedKeys.isEmpty)
@@ -396,7 +396,7 @@ struct TypingPipelineTests {
         for event in block {
             fixture.pipeline.handle(event)
         }
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        await Self.waitForAsyncWorkWindow(nanoseconds: 100_000_000)
 
         #expect(fixture.stats.autoSwitchesTotal == initialSwitches + 1)
         #expect(fixture.recents.entries.count == initialRecents + 1)
@@ -582,7 +582,7 @@ struct TypingPipelineTests {
         let initialSwitches = fixture.stats.autoSwitchesTotal
         let initialKeys = fixture.output.postedKeys.count
         fixture.pipeline.forceConvertLastSentence()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await Self.waitForAsyncWorkWindow(nanoseconds: 50_000_000)
 
         #expect(fixture.stats.autoSwitchesTotal == initialSwitches)
         #expect(fixture.output.postedKeys.count == initialKeys)
@@ -610,7 +610,7 @@ struct TypingPipelineTests {
             fixture.pipeline.handle(event)
         }
 
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        await Self.waitForAsyncWorkWindow(nanoseconds: 250_000_000)
 
         #expect(fixture.stats.autoSwitchesTotal == initialSwitches)
         #expect(fixture.output.postedKeys.isEmpty)
@@ -674,7 +674,8 @@ struct TypingPipelineTests {
             presentationDetector: presentationDetector,
             exclusions: ExclusionList(defaults: isolatedDefaults),
             stats: stats,
-            recents: recents
+            recents: recents,
+            sleepBeforeSequenceFlush: { _ in await Task.yield() }
         )
         pipeline.appState = appState
         return PipelineFixture(
@@ -695,9 +696,13 @@ struct TypingPipelineTests {
         var elapsed: UInt64 = 0
         while elapsed < timeoutNanoseconds {
             if condition() { return }
-            try? await Task.sleep(nanoseconds: step)
+            await Task.yield()
             elapsed += step
         }
+    }
+
+    private static func waitForAsyncWorkWindow(nanoseconds: UInt64) async {
+        await waitUntil(timeoutNanoseconds: nanoseconds) { false }
     }
 }
 

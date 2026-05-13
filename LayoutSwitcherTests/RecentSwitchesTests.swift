@@ -84,8 +84,20 @@ struct RecentSwitchesTests {
 
     @Test func corruptedDataYieldsEmptyHistory() {
         let defaults = makeDefaults()
-        defaults.set(Data([0xff, 0xfe, 0xfd]), forKey: "recentSwitches")
+        defaults.set(Data([0xff, 0xfe, 0xfd]), forKey: "recentSwitches.entries")
         let recents = RecentSwitches(defaults: defaults)
         #expect(recents.entries.isEmpty)
+    }
+
+    @Test func legacyDefaultsKeyIsMigratedToNamespacedKey() throws {
+        let defaults = makeDefaults()
+        let entry = makeEntry(original: "legacy")
+        let data = try JSONEncoder().encode([entry])
+        defaults.set(data, forKey: "recentSwitches")
+
+        let recents = RecentSwitches(defaults: defaults)
+
+        #expect(recents.entries.first?.original == "legacy")
+        #expect(defaults.data(forKey: "recentSwitches.entries") != nil)
     }
 }

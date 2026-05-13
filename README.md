@@ -1,7 +1,7 @@
 # LayoutSwitcher
 
 <p align="center">
-  <img src="layout-switcher-logo.svg" alt="LayoutSwitcher logo" width="160" />
+  <img src="ls_logo.png" alt="LayoutSwitcher logo" width="160" />
 </p>
 
 <p align="center">
@@ -72,6 +72,38 @@ On first launch the app:
 1. Shows an onboarding window asking for Accessibility permission.
 2. Opens System Settings → Privacy & Security → Accessibility for you to toggle the app on.
 3. Returns to the menu bar and starts intercepting keystrokes once permission is granted.
+
+## Install from a DMG
+
+For tester builds, the app may be distributed as a `LayoutSwitcher.dmg` file outside the Mac App Store.
+
+1. Download or receive `LayoutSwitcher.dmg`.
+2. Double-click the DMG file to mount it.
+3. Drag `LayoutSwitcher.app` to your `Applications` folder.
+4. Eject the mounted `LayoutSwitcher` disk image.
+5. Open `LayoutSwitcher.app` from `Applications`.
+
+If macOS blocks the first launch because the app was downloaded from the internet or is not notarized:
+
+1. Open Finder and go to `Applications`.
+2. Control-click or right-click `LayoutSwitcher.app`.
+3. Choose `Open`.
+4. Confirm the security prompt.
+
+After the app launches, grant the required macOS permissions:
+
+1. Open `System Settings`.
+2. Go to `Privacy & Security`.
+3. Enable `LayoutSwitcher` under `Accessibility`.
+4. Enable `LayoutSwitcher` under `Input Monitoring` if macOS asks for it.
+5. Restart `LayoutSwitcher` if macOS requests it after changing permissions.
+
+Why these permissions are required:
+
+- `Accessibility` lets LayoutSwitcher observe global keyboard input and retype corrected text.
+- `Input Monitoring` may be required by macOS for low-level keyboard event access.
+
+Tester note: non-notarized DMG builds are suitable for private testing, but macOS Gatekeeper can show extra warnings. Public distribution should use Developer ID signing and notarization.
 
 ## Tests
 

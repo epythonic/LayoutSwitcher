@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 /// One captured typed character with keycode, unicode and modifier metadata.
-struct WordChar {
+struct WordChar: Sendable {
     let keyCode: CGKeyCode
     let unicode: String
     let flags: CGEventFlags
@@ -10,7 +10,7 @@ struct WordChar {
 }
 
 /// Snapshot of one committed token and separator context.
-struct CommittedWord {
+struct CommittedWord: Sendable {
     let characters: [WordChar]
     let separator: WordSeparator
     let separatorKeyCode: CGKeyCode
@@ -27,6 +27,7 @@ struct CommittedWord {
 final class WordBuffer {
     private(set) var characters: [WordChar] = []
     private(set) var lastCommitted: CommittedWord?
+    private let now: @MainActor () -> Date
 
     var onAppended: ((WordChar) -> Void)?
     var onCommitted: ((CommittedWord) -> Void)?
@@ -34,6 +35,11 @@ final class WordBuffer {
 
     /// App bundle ID supplier attached by pipeline for context-aware commits.
     var bundleIDProvider: () -> String? = { nil }
+
+    /// Creates a buffer with an injectable clock for deterministic commit timestamps.
+    init(now: @escaping @MainActor () -> Date = Date.init) {
+        self.now = now
+    }
 
     /// Appends one key event as buffered character.
     func append(_ event: KeyEvent) {
@@ -65,7 +71,7 @@ final class WordBuffer {
             separatorKeyCode: separatorKeyCode,
             separatorFlags: separatorFlags,
             bundleID: bundleIDProvider(),
-            committedAt: Date()
+            committedAt: now()
         )
         characters.removeAll(keepingCapacity: true)
         lastCommitted = word
