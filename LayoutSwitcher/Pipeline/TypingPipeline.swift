@@ -337,6 +337,11 @@ final class TypingPipeline {
                 return .keep
             }
         }
+        if visibleLanguage != activeLanguage,
+           visibleLanguage != .en,
+           detector.dictionaries[visibleLanguage]?.contains(word.text) == true {
+            return visibleDecision.retypePayload == nil ? .keep : visibleDecision
+        }
         for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) where renderedLanguage != visibleLanguage {
             guard isRetypeTargetAllowed(renderedLanguage, from: activeLanguage) else {
                 continue

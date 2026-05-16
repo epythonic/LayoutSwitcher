@@ -680,6 +680,26 @@ struct TypingPipelineTests {
         #expect(fixture.output.playedFeedback == [.cupertino])
     }
 
+    @Test func visibleRussianDictionaryWordBeatsRenderedEnglishWhenActiveSnapshotIsEnglish() async throws {
+        let fixture = try Self.makeFixture(
+            retypeSucceeds: true,
+            initialLayoutID: "com.apple.keylayout.ABC",
+            enabledLayouts: Self.multilingualRetypeSources()
+        )
+        fixture.appState.correctCommonTypos = true
+
+        for event in try Self.wordEvents("мир", language: .ru) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitForAsyncWorkWindow(nanoseconds: 50_000_000)
+
+        #expect(fixture.recents.entries.isEmpty)
+        #expect(fixture.output.selectedLayouts.isEmpty)
+        #expect(fixture.output.postedKeys.isEmpty)
+        #expect(fixture.output.postedUnicode.isEmpty)
+    }
+
     @Test func visibleEnglishDoubleCapitalBeatsRenderedRussianSuggestionWhenActiveSnapshotIsRussian() async throws {
         let fixture = try Self.makeFixture(
             retypeSucceeds: true,
