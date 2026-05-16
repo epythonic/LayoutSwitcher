@@ -245,6 +245,34 @@ struct LayoutDetectorTests {
         #expect(decision == .switchAndRetypeWithFeedback(corrected: "привет", target: .ru, kind: .cupertino))
     }
 
+    @Test func cupertinoTrustsDictionaryValidatedRussianSuggestionWithoutNgramGain() {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: EmbeddedDictionaries.english(),
+                .ru: InMemoryDictionary(language: .ru, words: ["заключил", "заклучил"]),
+                .uk: EmbeddedDictionaries.ukrainian(),
+                .ro: EmbeddedDictionaries.romanian()
+            ],
+            ngrams: [
+                .en: NGramModels.english(),
+                .ru: NGramModels.russian(),
+                .uk: NGramModels.ukrainian(),
+                .ro: NGramModels.romanian()
+            ],
+            languageScorer: FixedTextScoreScorer(scores: ["заклучил": 0.0, "заключил": 0.0]),
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["заклучил": ["заключил"]]),
+            thresholds: .default
+        )
+        let decision = detector.decide(
+            buffer: chars("заклучил", language: .ru),
+            activeLanguage: .ru,
+            correctCommonTypos: true
+        )
+
+        #expect(decision == .switchAndRetypeWithFeedback(corrected: "заключил", target: .ru, kind: .cupertino))
+    }
+
     @Test func cupertinoCorrectsRomanianTypoWhenActiveDictionaryAlreadyHasMatch() {
         let detector = LayoutDetector(
             mapping: RuEnQwertyMapping(),

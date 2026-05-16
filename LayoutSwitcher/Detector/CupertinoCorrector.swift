@@ -47,7 +47,8 @@ struct CupertinoCorrector {
             }
 
         let dictionaryValidatedSuggestions = suggestions.filter { dictionary.contains($0) }
-        let validSuggestions = dictionaryValidatedSuggestions.isEmpty ? suggestions : dictionaryValidatedSuggestions
+        let usesDictionaryValidatedSuggestion = !dictionaryValidatedSuggestions.isEmpty
+        let validSuggestions = usesDictionaryValidatedSuggestion ? dictionaryValidatedSuggestions : suggestions
         guard let first = validSuggestions.first else { return nil }
         let distance = Self.damerauLevenshteinDistance(raw.lowercased(), first.lowercased())
         guard distance > 0,
@@ -58,7 +59,7 @@ struct CupertinoCorrector {
         let rawScore = scorer.score(raw, language: language).nGramScore
         let correctedScore = scorer.score(first, language: language).nGramScore
         let scoreGain = correctedScore - rawScore
-        guard scoreGain >= thresholds.cupertinoScoreMargin else {
+        guard usesDictionaryValidatedSuggestion || scoreGain >= thresholds.cupertinoScoreMargin else {
             return nil
         }
         return Correction(corrected: first, editDistance: distance, scoreGain: scoreGain)
