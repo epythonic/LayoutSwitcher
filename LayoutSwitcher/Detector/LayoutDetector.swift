@@ -433,6 +433,7 @@ struct LayoutDetector {
             if let correction = typoCorrectedDecision(
                 for: raw,
                 language: activeLanguage,
+                isEnabled: correctCommonTypos,
                 thresholds: activeThresholds
             ) {
                 return correction
@@ -443,6 +444,7 @@ struct LayoutDetector {
         if let correction = typoCorrectedDecision(
             for: raw,
             language: activeLanguage,
+            isEnabled: correctCommonTypos,
             thresholds: activeThresholds
         ) {
             return correction
@@ -493,9 +495,10 @@ struct LayoutDetector {
     private func typoCorrectedDecision(
         for raw: String,
         language: LanguageID,
+        isEnabled: Bool,
         thresholds: DetectionThresholds
     ) -> LayoutDecision? {
-        guard correctCommonTypos,
+        guard isEnabled,
               let activeDictionary = dictionaries[language],
               let spellingSuggestionProvider else {
             return nil

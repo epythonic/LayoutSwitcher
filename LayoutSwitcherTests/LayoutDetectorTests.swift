@@ -184,8 +184,8 @@ struct LayoutDetectorTests {
                 .uk: NGramModels.ukrainian(),
                 .ro: NGramModels.romanian()
             ],
-            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["bokk": ["book"]]),
             languageScorer: FixedTextScoreScorer(scores: ["bokk": -1.0, "book": 1.0]),
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["bokk": ["book"]]),
             thresholds: DetectionThresholds(cupertinoScoreMargin: 0.0)
         )
         let decision = detector.decide(
