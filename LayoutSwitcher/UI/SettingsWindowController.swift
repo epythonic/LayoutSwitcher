@@ -4,20 +4,35 @@ import SwiftUI
 /// Owns preferences window instance and injects runtime state into `SettingsView`.
 @MainActor
 final class SettingsWindowController: NSObject {
+    /// Lazily created singleton preferences window.
     private var window: NSWindow?
+    /// Shared settings model.
     private let appState: AppState
+    /// Per-application exclusions model.
     private let exclusions: ExclusionList
+    /// Usage statistics model.
     private let stats: UsageStats
+    /// User English dictionary model.
     private let userEnglish: UserDictionary
+    /// User Russian dictionary model.
     private let userRussian: UserDictionary
+    /// User Ukrainian dictionary model.
     private let userUkrainian: UserDictionary
+    /// User Romanian dictionary model.
     private let userRomanian: UserDictionary
+    /// Keyboard input source manager.
     private let inputSources: InputSourceManager
+    /// Hotkey binding registry.
     private let hotkeys: HotkeyRegistry
+    /// Per-application preferred layout model.
     private let perAppLayouts: PerAppLayoutPreferences
+    /// Recent corrections history model.
     private let recents: RecentSwitches
+    /// Learned corrections cache model.
     private let learningCache: LearningCache
+    /// Launch-at-login service manager.
     private let launchAtLoginManager: LaunchAtLoginManager
+    /// Opens the help window from the settings UI.
     private let openHelp: () -> Void
 
     /// Creates settings window controller with all shared state dependencies.

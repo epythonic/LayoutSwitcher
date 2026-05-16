@@ -14,12 +14,17 @@ final class PerAppLayoutPreferences {
 
     private(set) var entries: [String: String]
     private let defaults: UserDefaults
+    private let appNameProvider: @MainActor (String) -> String?
 
     /// Loads persisted mapping from defaults (empty on first launch).
     /// Tries Codable JSON first, falls back to the legacy plist `[String: String]`
     /// dictionary format so pre-Codable data isn't lost on upgrade.
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults,
+        appNameProvider: @escaping @MainActor (String) -> String? = { _ in nil }
+    ) {
         self.defaults = defaults
+        self.appNameProvider = appNameProvider
         self.entries = Self.load(from: defaults)
     }
 
@@ -45,7 +50,7 @@ final class PerAppLayoutPreferences {
     /// Returns mappings sorted by localized app name for settings UI.
     func sortedEntries() -> [(bundleID: String, layoutID: String, appName: String)] {
         entries.map { id, layout in
-            (id, layout, ExclusionList.localizedName(for: id) ?? id)
+            (id, layout, appNameProvider(id) ?? id)
         }
         .sorted { $0.appName.localizedCompare($1.appName) == .orderedAscending }
     }

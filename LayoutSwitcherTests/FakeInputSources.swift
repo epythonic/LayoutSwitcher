@@ -11,6 +11,8 @@ final class FakeInputSources: InputSourceManaging {
     private(set) var layouts: [InputSource]
     /// Records of `select(_:)` calls — useful for asserting pipeline behavior.
     private(set) var selectedHistory: [String] = []
+    /// Counts explicit refresh requests from collaborators.
+    private(set) var refreshCount = 0
     /// Optional override forcing `select` to fail (e.g. simulating TIS errors).
     var selectFailureStatus: OSStatus?
 
@@ -36,7 +38,7 @@ final class FakeInputSources: InputSourceManaging {
     }
 
     func refresh() {
-        // No-op: state is fully owned by this instance, never read from the system.
+        refreshCount += 1
     }
 
     func keyboardLayouts() -> [InputSource] { layouts }

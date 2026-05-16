@@ -1,4 +1,3 @@
-import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -6,7 +5,7 @@ import os
 
 /// Performs manual "convert selected text" through Accessibility first, then clipboard.
 @MainActor
-final class SelectionConverter {
+struct SelectionConverter {
     private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "SelectionConverter")
 
     private let textConverter: SelectionTextConverter
@@ -17,48 +16,7 @@ final class SelectionConverter {
     private let postKeyEvent: @MainActor (CGKeyCode, CGEventFlags) -> Void
     private let sleep: @MainActor (UInt64) async -> Void
 
-    init(mapping: any KeyboardMapping, focused: FocusedAppObserving) {
-        self.textConverter = SelectionTextConverter(mapping: mapping)
-        self.focused = focused
-        self.focusedElementProvider = {
-            let systemWide = AXUIElementCreateSystemWide()
-            var focusedElement: CFTypeRef?
-            let status = AXUIElementCopyAttributeValue(
-                systemWide,
-                kAXFocusedUIElementAttribute as CFString,
-                &focusedElement
-            )
-            guard status == .success,
-                  let element = focusedElement,
-                  let axElement = AXElementBridge.element(from: element) else {
-                return nil
-            }
-            return axElement
-        }
-        self.pasteboardRead = {
-            NSPasteboard.general.string(forType: .string)
-        }
-        self.pasteboardWrite = { text in
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        }
-        self.postKeyEvent = { keyCode, flags in
-            guard let eventDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
-                  let eventUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
-                return
-            }
-            eventDown.flags = flags
-            eventUp.flags = flags
-            SyntheticEventFilter.tag(eventDown)
-            SyntheticEventFilter.tag(eventUp)
-            eventDown.post(tap: .cghidEventTap)
-            eventUp.post(tap: .cghidEventTap)
-        }
-        self.sleep = { nanoseconds in
-            try? await Task.sleep(nanoseconds: nanoseconds)
-        }
-    }
-
+    /// Creates converter with explicit Accessibility, pasteboard and keyboard side effects.
     init(
         textConverter: SelectionTextConverter,
         focused: FocusedAppObserving,

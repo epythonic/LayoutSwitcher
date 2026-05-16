@@ -2469,3 +2469,2648 @@ format: png
 ```
 
 Вывод: app icon теперь берется из предоставленного `ls_logo.png`, а menu bar icon остается отдельной нативной монохромной иконкой для верхней панели macOS.
+
+## Шаг 90. Повторный глубокий аудит качества кода Swift 6
+
+Дата повторного прохода: 2026-05-15.
+
+Цель: повторно проверить качество кода после основного Swift 6 аудита, полировки первого запуска, локализаций, status/app icon и подготовки tester DMG.
+
+Ограничение прохода: это статический аудит и документационный отчет. Сборка и тесты в этом проходе не запускались, потому что изменений в Swift-код не вносилось.
+
+Затронутые файлы: только этот отчет `LayoutSwitcher/docs/Swift6CodeQualityAudit.md`.
+
+### Краткий вердикт
+
+Проект находится в хорошем состоянии для приватного использования и дальнейшего тестирования. Основной контур Swift 6 safety выглядит зрелым: shared mutable state в ключевых местах изолирован через `@MainActor`, side effects в большинстве сервисов вынесены в dependency injection seams, forced unwrap / forced cast / `try!` статическим поиском не обнаружены, тестовая база использует Swift Testing.
+
+Критических блокеров уровня P0 не найдено.
+
+Есть несколько важных качественных долгов, которые лучше закрыть до следующего публичного/долгого релиза:
+
+- P1: дрейф идентификатора приложения: target bundle identifier равен `GM.LayoutSwitcher`, но first-run exclusions и часть runtime-констант все еще используют `GIH.LayoutSwitcher`.
+- P2: `LaunchAtLoginManager` и `SettingsView.exportLogs()` остаются менее тестируемыми, чем остальные сервисы, потому что напрямую обращаются к системным side effects.
+- P2: проектная политика "zero warnings" пока не закреплена настройкой warnings-as-errors в Xcode project.
+- P2: `KeyboardEventTap` содержит осознанный `MainActor.assumeIsolated` путь без отдельного тестового покрытия wrapper-логики.
+- P3: в тестовом target остался шаблонный пустой `LayoutSwitcherTests.example()`.
+- P3: string catalog содержит несколько нейтральных/динамических строк без переводов, которые стоит либо локализовать, либо явно исключить из пользовательского смысла.
+- P3: `PresentationModeDetector` дублирует default set в init и static property, что создает риск рассинхронизации.
+
+### Что было проверено
+
+- Project settings: `SWIFT_VERSION = 6.0`, entitlements, hardened runtime, bundle identifiers, synchronized docs exception.
+- Swift safety scan: forced unwrap-like patterns, `try!`, `as!`, `fatalError`, `preconditionFailure`, `print`, `NSLog`, `@unchecked Sendable`.
+- Concurrency scan: `@MainActor`, `@Observable`, `Sendable`, `Task { @MainActor ... }`, `MainActor.assumeIsolated`.
+- Dependency injection scan: прямые обращения к `UserDefaults.standard`, `FileManager.default`, `Bundle.main`, `NSWorkspace.shared`, `UNUserNotificationCenter.current()`, `Task.sleep`, `Timer`.
+- Testing scan: Swift Testing markers, XCTest markers, `Thread.sleep`.
+- Localization scan: полнота `Localizable.xcstrings` по `en`, `ru`, `ro`, `uk`; consistency H2 sections в `Help_en.md`, `Help_ru.md`, `Help_ro.md`, `Help_uk.md`.
+- Runtime identity scan: `GIH.LayoutSwitcher` vs `GM.LayoutSwitcher`.
+- Distribution docs scan: README содержит release link, Gatekeeper, Accessibility и Input Monitoring guidance.
+
+### Положительные наблюдения
+
+- `project.pbxproj` показывает `SWIFT_VERSION = 6.0` для app/test targets.
+- App target использует `LayoutSwitcher/LayoutSwitcher.entitlements`.
+- Hardened Runtime включен для app target.
+- Entitlements явно отключают App Sandbox и включают `com.apple.security.device.input-monitoring`, что соответствует CGEventTap/Input Monitoring модели.
+- `LayoutSwitcher/docs/Swift6CodeQualityAudit.md` уже добавлен в `membershipExceptions`, поэтому этот отчет не должен попадать в runtime resources приложения.
+- Поиск не нашел `try!`, `as!`, `fatalError`, `preconditionFailure`, `assertionFailure`, `print`, `debugPrint`, `dump`, `NSLog` в рабочем Swift-коде.
+- Отдельный поиск forced unwrap-like паттернов не дал находок.
+- Поиск `import XCTest`, `XCTAssert`, `Thread.sleep` в `LayoutSwitcherTests` не дал находок.
+- Основные stateful сервисы помечены `@MainActor`, а value snapshots имеют `Sendable` там, где это важно: `WordChar`, `CommittedWord`, `KeyEvent`, `InputSourceSnapshot`, `RecentSwitchEntry`, `PendingRetypeCandidate`, `RetypeResult`, `LanguageID`, hotkey models.
+- Системные границы в большинстве критичных мест инъектируются через closures: `NotificationManager`, `FocusedAppObserver`, `AccessibilityPermission`, `SecureInputObserver`, `InputSourceManager`, `Retyper`, `TypingPipeline`, `UserDictionary`, `OnboardingCompletionStore`.
+- Help markdown files имеют одинаковый набор секций для `en`, `ru`, `ro`, `uk`.
+
+### P1. Bundle identity drift: `GM.LayoutSwitcher` vs `GIH.LayoutSwitcher`
+
+Факт:
+
+- Xcode target bundle identifier: `GM.LayoutSwitcher`.
+- `ExclusionList.defaults` содержит `"GIH.LayoutSwitcher"`.
+- `ExclusionListTests.firstRunSeedsRecommendedDefaults()` тоже ожидает `"GIH.LayoutSwitcher"`.
+- `LaunchAtLoginManager` содержит private static `serviceName = "GIH.LayoutSwitcher"`.
+- `os.Logger` subsystem и export logs predicate также используют `GIH.LayoutSwitcher`.
+
+Почему это важно:
+
+- Для логирования `GIH.LayoutSwitcher` может быть осознанным стабильным subsystem namespace, хотя его стоит явно зафиксировать как выбранное имя.
+- Для exclusions это выглядит как реальный stale identifier. Если приложение должно исключать само себя из auto-switch, first-run seed сейчас не совпадает с фактическим `PRODUCT_BUNDLE_IDENTIFIER`.
+- Тест закрепляет stale value, поэтому не поймает ошибку после изменения bundle identifier.
+- `LaunchAtLoginManager.serviceName` сейчас не используется, но его наличие создает ложную уверенность и усиливает рассинхронизацию identity модели.
+
+Рекомендация:
+
+- Ввести единый источник runtime identity, например `AppIdentity.bundleIdentifierFallback`.
+- Для self-exclusion использовать фактический `Bundle.main.bundleIdentifier ?? "GM.LayoutSwitcher"` либо явно добавить `GM.LayoutSwitcher` в default exclusions.
+- Для мягкой миграции можно временно оставить `GIH.LayoutSwitcher` рядом с `GM.LayoutSwitcher`, чтобы не ломать старые пользовательские настройки.
+- Обновить `ExclusionListTests` так, чтобы тест проверял актуальный self bundle ID, а не историческую строку.
+- Удалить unused `serviceName` из `LaunchAtLoginManager` или заменить его на реально используемый идентификатор, если появится helper/service registration path.
+
+Приоритет: высокий, потому что это маленькая правка с понятным пользовательским эффектом.
+
+### P2. Launch-at-login менеджер хуже изолирован, чем остальные сервисы
+
+Факт:
+
+- `LaunchAtLoginManager` напрямую использует `SMAppService.mainApp`.
+- В тестах не найден `LaunchAtLoginManagerTests`.
+- В отличие от `NotificationManager`, `InputSourceManager`, `AccessibilityPermission`, `Retyper` и других сервисов, здесь нет injected closures для `status`, `register`, `unregister`.
+
+Почему это важно:
+
+- Текущая реализация проста, но ее сложно покрыть deterministic tests без реального system state.
+- Логика sync `appState.launchAtLogin` в `AppDelegate` зависит от системного статуса, но unit-level contract для success/failure paths не закреплен.
+- Это выбивается из собственного проектного правила: "Every service class must expose a designated initializer with injected closures for all side effects".
+
+Рекомендация:
+
+- Добавить initializer с closures или маленький protocol facade:
+  - `statusProvider: () -> SMAppService.Status`
+  - `register: () throws -> Void`
+  - `unregister: () throws -> Void`
+- Покрыть тестами:
+  - enabled status отражается корректно;
+  - register success возвращает true;
+  - register failure возвращает false и не меняет UI state напрямую;
+  - unregister failure возвращает false;
+  - `.notFound` дает false и логируемую ошибку.
+
+Приоритет: средний. Это не ломает текущий запуск, но снижает уверенность в regression safety.
+
+### P2. Export logs logic живет прямо во View и блокирует main-thread path
+
+Факт:
+
+- `SettingsView.exportLogs()` создает `NSSavePanel`, `Process`, `Pipe`, запускает `/usr/bin/log show` и читает `readDataToEndOfFile()` прямо внутри view-level метода.
+- Эта логика не вынесена в отдельный сервис и не имеет injected process runner / file writer.
+
+Почему это важно:
+
+- `log show --last 1h` может быть относительно тяжелой операцией.
+- Синхронное чтение output pipe может подвиснуть UI на слабой машине или при большом объеме логов.
+- Ошибки экспорта сейчас трудно тестировать без реального `Process`.
+- View получает слишком много ответственности: UI, выбор файла, запуск процесса, запись файла, логирование ошибки.
+
+Рекомендация:
+
+- Вынести в `LogExporter` или `DiagnosticsLogExporter`.
+- Инъектировать process runner и writer.
+- Запускать экспорт вне main actor, а UI обновлять после завершения.
+- Добавить тесты на аргументы `log show`, успешную запись и failure path.
+
+Приоритет: средний. Это quality/testability issue, не основной runtime blocker.
+
+### P2. Политика zero warnings не закреплена project gate
+
+Факт:
+
+- В `project.pbxproj` найдены `SWIFT_VERSION = 6.0`, `ENABLE_HARDENED_RUNTIME = YES`, `CODE_SIGN_ENTITLEMENTS`.
+- `SWIFT_TREAT_WARNINGS_AS_ERRORS` и `GCC_TREAT_WARNINGS_AS_ERRORS` поиском не найдены.
+
+Почему это важно:
+
+- В правилах проекта явно указано: zero errors, zero warnings on `xcodebuild build`.
+- Сейчас это остается дисциплиной ручной проверки, а не настройкой проекта.
+- Любое новое warning может попасть в локальную сборку или CI незамеченным, если никто специально не смотрит полный лог.
+
+Рекомендация:
+
+- Добавить warnings-as-errors gate для Debug/Release после отдельного build pass.
+- Если включение сразу шумное, сначала зафиксировать текущие warnings в отчете и закрыть их отдельным шагом.
+- Для CI/локальной проверки использовать команду:
+
+```text
+xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'
+```
+
+Приоритет: средний. Включать только после явной проверки build output, чтобы не заблокировать разработку неожиданными SDK warnings.
+
+### P2. `MainActor.assumeIsolated` в event tap остается самым чувствительным concurrency boundary
+
+Факт:
+
+- `KeyboardEventTap.tapCallback` проверяет `Thread.isMainThread`.
+- После проверки вызывается `handleSynchronousMainRunLoopCallback(...)`.
+- Внутри используется `MainActor.assumeIsolated`.
+- Комментарий объясняет причину: callback должен остаться синхронным, потому что `nil` suppresses hotkey event before system sees it.
+- Тестов по `KeyboardEventTap` поиском не найдено.
+
+Почему это важно:
+
+- Это осознанное и, вероятно, правильное место для `assumeIsolated`, потому что event tap установлен на main run loop и hotkey suppression должен быть синхронным.
+- Но это все равно самый хрупкий boundary Swift 6 strict concurrency: если установка tap/run loop когда-нибудь изменится, safety будет зависеть от runtime guard.
+- Отсутствие тестов на pass-through/off-main branch и hotkey suppression branch оставляет эту область в основном на manual smoke-test.
+
+Рекомендация:
+
+- Не переписывать на `Task { @MainActor ... }` без отдельного дизайна, потому что это сломает synchronous suppression.
+- Добавить minimal seam/test harness вокруг decision logic:
+  - synthetic event passes through;
+  - hotkey handler true returns nil;
+  - regular key event calls `onKeyEvent`;
+  - off-main callback branch passes event through.
+- Сохранить комментарий как архитектурное решение.
+
+Приоритет: средний. Код выглядит осознанно, но это зона, которую стоит защитить тестами.
+
+### P3. В тестовом target остался template placeholder test
+
+Факт:
+
+- `LayoutSwitcherTests/LayoutSwitcherTests.swift` содержит `@Test func example() async throws` без assertions.
+- Файл содержит шаблонный комментарий `Write your test here...`.
+
+Почему это важно:
+
+- Тест не проверяет поведение.
+- Он увеличивает число тестов, но не добавляет уверенности.
+- В зрелом проекте такой файл выглядит как случайный остаток Xcode template.
+
+Рекомендация:
+
+- Удалить файл, если он не нужен.
+- Или заменить на маленький smoke-level invariant, например:
+  - `LanguageID.allCases` содержит `en`, `ru`, `uk`, `ro`;
+  - `ExclusionList.defaults` содержит актуальный app bundle ID;
+  - `HotkeyAction` default bindings include expected core actions.
+
+Приоритет: низкий, но это быстрая уборка.
+
+### P3. String catalog содержит несколько нейтральных/динамических missing-localization entries
+
+Факт:
+
+- Проверка `Localizable.xcstrings` на отсутствие одной из локалей `en`, `ru`, `ro`, `uk` вернула:
+  - `%@ (%@)`
+  - `%@ -> %@`
+  - `%@ <-> %@`
+  - `•`
+
+Примечание:
+
+- В исходном Swift-коде эти строки соответствуют динамическому отображению layout names, pairs, recent corrections и декоративному separator dot.
+- Это не выглядит как реальная пользовательская фраза без перевода.
+
+Почему это важно:
+
+- Такие entries создают шум в localization workflow.
+- При будущей работе переводчик может принять их за незавершенные строки.
+
+Рекомендация:
+
+- Если это именно neutral formatting symbols, оставить как nonlocalized через явный подход в SwiftUI, где это уместно.
+- Если это пользовательские шаблоны, добавить локализации с полноценными keys.
+
+Приоритет: низкий.
+
+### P3. `PresentationModeDetector` имеет два источника default bundle IDs
+
+Факт:
+
+- `PresentationModeDetector.init(...)` содержит inline default set.
+- Ниже есть `static let defaultPresentationBundleIDs` с похожим набором.
+- Тест проверяет `PresentationModeDetector.defaultPresentationBundleIDs.contains("com.apple.iWork.Keynote")`, но default initializer использует не эту static property.
+
+Почему это важно:
+
+- При добавлении нового presentation app можно обновить static set и забыть inline default set.
+- Тест при этом может пройти, хотя runtime default behavior не изменится.
+
+Рекомендация:
+
+- Заменить default parameter на `presentationBundleIDs: Set<String> = Self.defaultPresentationBundleIDs`.
+- Добавить тест, что default detector использует static defaults.
+
+Приоритет: низкий.
+
+### Дополнительные наблюдения без статуса дефекта
+
+- `UserDictionary` использует throwing closures для IO, но переводит recoverable failures в лог и пустой результат. Это не конфликтует с правилом "do not use throws for recoverable domain errors", потому что throws здесь отражает Foundation IO boundary, а не domain-level decision.
+- `NotificationManager` напрямую использует `UNUserNotificationCenter.current()` только внутри default injected closures, что соответствует DI-паттерну проекта.
+- `Retyper` делает preflight до destructive phase, возвращает `RetypeResult` с explicit failure reasons и не стирает текст до проверки layout/encoding. Это сильная архитектурная часть.
+- `FocusedAppObserver` и `InputSourceManager` используют `Task { @MainActor ... }` для async delivery из системных callbacks, что выглядит правильно для несинхронных notification paths.
+- `CarbonHotkeyManager` возвращает из callback сразу и доставляет action через `Task { @MainActor ... }`; это приемлемо, потому что suppression keyDown отдельно обрабатывается `KeyboardEventTap`.
+- Non-ASCII в Swift source в основном оправдан domain-моделью: словари, keyboard mappings, Romanian diacritics, Russian/Ukrainian glyphs, UI separators. Однако в logs/comments встречаются Unicode arrows и em dash; это style-level вопрос, не дефект.
+
+### Рекомендуемый следующий batch улучшений
+
+1. Исправить bundle identity drift: добавить `GM.LayoutSwitcher` в self-exclusion, обновить тест, убрать/прояснить stale `GIH.LayoutSwitcher` там, где это не logger subsystem.
+2. Удалить или заменить placeholder `LayoutSwitcherTests.example()`.
+3. Убрать duplication в `PresentationModeDetector.defaultPresentationBundleIDs`.
+4. Вынести `LaunchAtLoginManager` на injected side-effect closures и добавить unit tests.
+5. Вынести export logs из `SettingsView` в тестируемый diagnostics service.
+6. После этих правок запустить targeted tests, затем полный `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'`.
+7. Отдельным решением включить warnings-as-errors после чистой build-проверки.
+
+Итог повторного аудита: проект остается пригодным для приватного использования и тестирования. Основной code quality высокий, но следующий разумный шаг уже не широкий рефакторинг, а точечная уборка identity/testability gaps вокруг bundle ID, login item, diagnostics export и event tap coverage.
+
+### Шаг 91. Усиление тестового покрытия `KeyboardEventTap`
+
+**Дата:** 2026-05-15
+
+**Цель шага:** закрыть риск из повторного аудита вокруг синхронной границы `CGEventTap` -> `MainActor.assumeIsolated`, где ошибка поведения может привести к пропуску hotkey-событий или повторной обработке synthetic events.
+
+**Что изменено:**
+
+- `KeyboardEventTap.handle(type:event:)` открыт на уровне модуля для `@testable import` без изменения runtime-поведения приложения.
+- Добавлен набор `KeyboardEventTapTests` на Swift Testing.
+- Покрыты сценарии:
+  - hotkey consume возвращает `nil` и не передаёт событие в pipeline;
+  - обычный keyDown сначала проходит через hotkey handler, затем через `onKeyEvent`;
+  - auto-repeat события игнорируются обработчиками и пропускаются дальше;
+  - synthetic events не попадают в обработчики, чтобы не создавать feedback loop;
+  - disabled tap event безопасно пропускается дальше.
+
+**Результат проверки:**
+
+- Targeted: `KeyboardEventTapTests` — 5 тестов, `** TEST SUCCEEDED **`.
+- Full regression: 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** риск вокруг event tap boundary стал ниже: критическая синхронная ветка теперь закреплена автоматическими тестами, а архитектура `CGEventTap` сохранена без асинхронного разрыва hotkey-решения.
+
+### Шаг 92. Включение `warnings-as-errors` для Swift-сборки
+
+**Дата:** 2026-05-15
+
+**Цель шага:** превратить требование "zero warnings" из договорённости в автоматический build gate, чтобы новые Swift-предупреждения не проходили незамеченными.
+
+**Что изменено:**
+
+- В `LayoutSwitcher.xcodeproj/project.pbxproj` для project-level Debug/Release добавлен `SWIFT_TREAT_WARNINGS_AS_ERRORS = YES`.
+- Настройка наследуется app, unit test и UI test targets.
+- При проверке `xcodebuild` подтвердил передачу `-warnings-as-errors` в Swift compiler invocation.
+
+**Что нашёл новый gate:**
+
+- `AccessibilityPermissionTests` использовал mutable local state (`trusted`) после захвата closure.
+- `SecureInputObserverTests` использовал mutable local state (`secureInputEnabled`) после захвата closure.
+
+**Что исправлено:**
+
+- В обоих тестовых наборах mutable state перенесён в `@MainActor` fixture-классы.
+- Closure-инъекции остались детерминированными и не зависят от реального состояния macOS.
+
+**Результат проверки:**
+
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Targeted: `SecureInputObserverTests` — 3 теста, `** TEST SUCCEEDED **`.
+- Full regression: 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** проект теперь защищён от новых Swift warning-regressions на уровне Xcode-сборки. Найденные warning-as-error проблемы были в тестовых stubs и исправлены без изменения runtime-логики приложения.
+
+### Шаг 93. Очистка технических строк в `Localizable.xcstrings`
+
+**Дата:** 2026-05-15
+
+**Цель шага:** убрать нейтральные/технические записи из string catalog и явно закрыть форматные строки, которые Xcode держал в состоянии `new` или без локализаций.
+
+**Что найдено:**
+
+- В `Localizable.xcstrings` были технические ключи без локализаций: пустая строка и `•`.
+- Форматные шаблоны `%@ (%@)`, `%@ → %@`, `%@ ↔ %@` имели неполные локализации и состояние `new`.
+- `•` использовался как визуальный разделитель в `LearningTab`, а не как пользовательская строка.
+
+**Что изменено:**
+
+- `LearningTab` теперь использует `Text(verbatim: "•")`, чтобы визуальный bullet не попадал в локализацию.
+- Из `Localizable.xcstrings` удалены технические ключи пустой строки и `•`.
+- Для форматных шаблонов добавлены явные `en`, `ru`, `ro`, `uk` значения с positional placeholders:
+  - `%1$@ (%2$@)`
+  - `%1$@ → %2$@`
+  - `%1$@ ↔ %2$@`
+
+**Результат проверки:**
+
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Full regression: 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** каталог локализаций стал чище: технический UI-разделитель больше не локализуется, а форматные строки теперь явно покрыты всеми поддерживаемыми языками и проходят сборку с `warnings-as-errors`.
+
+### Шаг 94. Первый слой DocC-документации для runtime core
+
+**Дата:** 2026-05-15
+
+**Цель шага:** начать закрывать пробелы в Swift DocC-документации для важных внутренних API без большого косметического рефакторинга.
+
+**Что найдено:**
+
+- Автоматический обзор показал десятки internal типов без `///`-комментариев.
+- Для одного шага выбран приоритетный runtime core: состояние приложения, разрешения, secure input, typing pipeline и retype-движок.
+
+**Что изменено:**
+
+- В `AppState` добавлены DocC-комментарии к `SnoozeDuration`, `AppState`, ключевым observable-свойствам, init и snooze-методам.
+- В `AccessibilityPermission` и `SecureInputObserver` задокументированы polling-протоколы и их invalidation contract.
+- В `TypingPipeline` добавлено описание роли pipeline как границы между keyboard input и сервисами приложения.
+- В `Retyper` добавлено описание безопасной модели retyping: layout selection, confirmation, injected side effects.
+
+**Результат проверки:**
+
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Full regression: 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** документация ключевого runtime слоя стала понятнее для будущей поддержки, при этом runtime-поведение приложения не изменялось.
+
+### Шаг 95. Второй слой DocC-документации для detector/pipeline support
+
+**Дата:** 2026-05-15
+
+**Цель шага:** продолжить закрывать пробелы в Swift DocC-документации для слоя, который объясняет решения detector и управление retype-потоком.
+
+**Что изменено:**
+- В `LanguageScoring` задокументирован scoring contract и fallback natural-language probability.
+- В `LayoutDetector` задокументированы доменные решения `LayoutDecision`, роль detector и основные зависимости scoring/dictionary/ngram/resolver.
+- В `LearningCache` задокументирована UI-модель learned entries и injectable init.
+- В `RetypeDispatcher` задокументирована cooldown-модель single/sequence retype и связи с app state/hotkey undo.
+- В `SequenceDetector` задокументированы pending candidates, lookahead thresholds, ingest/reset contract.
+
+**Результат проверки:**
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** detector/pipeline support слой стал понятнее для сопровождения: теперь документированы основные причины решений, границы cooldown и coalescing многословных retype-блоков.
+
+### Шаг 96. DocC-документация для сервисного слоя и DI-side effects
+
+**Дата:** 2026-05-15
+
+**Цель шага:** продолжить закрывать пробелы в Swift DocC-документации вокруг сервисов, которые взаимодействуют с macOS API и поэтому особенно зависят от явных DI-контрактов.
+
+**Что изменено:**
+- В `OnboardingCompletionStore` задокументирован injectable persistence initializer.
+- В `LaunchAtLoginManager` задокументированы ServiceManagement side-effect closures и logger.
+- В `InputSourceManager` задокументированы typealias-контракты для TIS providers/selectors/observers, а также observer handle и injected dependencies.
+- В `CarbonHotkeyManager` задокументированы Carbon handler/hotkey reference state, action dispatch и modifier conversion.
+- В `NotificationManager` задокументированы notification-center side-effect closures, pending notification ID и deterministic ID factory.
+
+**Результат проверки:**
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** сервисный слой стал прозрачнее для сопровождения: теперь явно видно, какие зависимости являются production side effects, а какие заменяются тестовыми closures.
+
+### Шаг 97. DocC-документация для UI/controller и hotkey helper слоя
+
+**Дата:** 2026-05-15
+
+**Цель шага:** продолжить закрывать пробелы в Swift DocC-документации в слое, который связывает SwiftUI/AppKit UI, menu bar item и настройку горячих клавиш.
+
+**Что изменено:**
+- В `StatusItemController` задокументированы ownership `NSStatusItem`, зависимости меню, secure/presentation badge state, navigation callbacks, динамическое обновление меню и action handlers.
+- В `SettingsWindowController`, `HelpWindowController` и `OnboardingWindowController` уточнены lifecycle/ownership комментарии для lazy singleton окон и injected state.
+- В `HotkeyRegistry` задокументированы persisted payload keys, current binding storage, `HotkeyDefinition` fields и modifier flags.
+- В `KeyRecorderView` задокументированы SwiftUI/AppKit bridge points, recording state, one-shot event monitor и commit callback.
+
+**Результат проверки:**
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** UI/controller слой стал понятнее для сопровождения: теперь лучше описаны границы ответственности menu bar controller, оконных controller-ов и hotkey recording/registry инфраструктуры.
+
+### Шаг 98. DocC-документация для settings tab state contracts
+
+**Дата:** 2026-05-15
+
+**Цель шага:** продолжить закрывать пробелы в Swift DocC-документации на уровне SwiftUI settings tabs, где важно понимать источники состояния, binding-и и injected models.
+
+**Что изменено:**
+- В `SettingsView` задокументированы все shared `@Bindable` модели, `learningCache`, `launchAtLoginManager`, `openHelp` и tab container.
+- В `GeneralTab` задокументированы состояние приложения, статистика и side-effect service для launch-at-login.
+- В `HotkeysTab` задокументированы registry, editing/recording/conflict state и view-model row fields.
+- В `LayoutsTab` задокументирован input source manager и identity для `LanguagePair` rows.
+- В `ExclusionsTab` задокументированы persisted exclusion model и selected bundle state.
+
+**Результат проверки:**
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** settings UI стал понятнее для сопровождения: теперь зависимости вкладок и transient UI state описаны явно, без необходимости восстанавливать ownership по телу `body`.
+
+### Шаг 99. DocC-документация для dictionaries/history/help/onboarding UI
+
+**Дата:** 2026-05-15
+
+**Цель шага:** продолжить закрывать пробелы в Swift DocC-документации для оставшихся SwiftUI-facing экранов и helper-ов, которые управляют пользовательскими словарями, историей, справкой и onboarding flow.
+
+**Что изменено:**
+- В `DictionariesTab` задокументированы language-specific dictionary dependencies, editor input state и selection state.
+- В `HistoryTab` задокументированы recent history model, kind/app filters, injectable clipboard writer, filter enum cases и timestamp/export formatters.
+- В `HelpView` задокументирован selected section state.
+- В `HelpContent` задокументированы `HelpSection` fields, localized body accessors, supported help languages, active-language resolver, static section registry, markdown loader/cache и bundled loader facade.
+- В `OnboardingView` задокументированы onboarding dependencies, completion callback, transient sandbox state и все sequential onboarding steps.
+
+**Результат проверки:**
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — 254 теста в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** оставшийся SwiftUI-facing слой стал заметно прозрачнее: теперь documented ownership покрывает словари, историю, help content pipeline и onboarding state machine.
+
+### Шаг 100. Logging/privacy audit и hardening экспорта диагностических логов
+
+**Дата:** 2026-05-15
+
+**Цель шага:** перейти от DocC-проходов к аудиту logging/privacy дисциплины: проверить отсутствие `print`/`NSLog`, использование `os.Logger` и корректность диагностического export path.
+
+**Что проверено:**
+- В рабочем коде `LayoutSwitcher/` и тестах не найдено использования `print()` или `NSLog()` для runtime-логирования.
+- Runtime-логирование использует `os.Logger` с категориями проекта.
+- Интерполируемые значения в логах проекта уже размечены через `privacy: .public`, что соответствует принятому правилу проекта для читаемых Console logs.
+
+**Что изменено:**
+- В `DiagnosticsLogExporter` добавлен typed failure `LogShowFailure` для non-zero exit status команды `/usr/bin/log show`.
+- Production runner теперь возвращает exported data только если `terminationStatus == 0`; иначе export завершается failure и не маскирует сбой пустым/частичным файлом.
+- Чистый helper `checkedOutput(_:terminationStatus:)` сделан `nonisolated`, потому что вызывается из `Task.detached` и не зависит от `@MainActor` состояния.
+- В `DiagnosticsLogExporterTests` добавлены проверки successful status и failed status.
+
+**Результат проверки:**
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/DiagnosticsLogExporterTests` — 5 тестов, `** TEST SUCCEEDED **`.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — 256 тестов в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** logging/privacy дисциплина в коде подтверждена, а диагностический экспорт стал надежнее: теперь сбой системной команды `log show` не будет ошибочно считаться успешным экспортом.
+
+### Шаг 101. DI/testability audit для side effects и deterministic LearningCache IDs
+
+**Дата:** 2026-05-15
+
+**Цель шага:** начать отдельный DI/testability-проход после logging/privacy аудита: найти прямые production side effects и убедиться, что они либо уже внедряются через closures, либо закрыть небольшой безопасный пробел.
+
+**Что проверено:**
+- `ExclusionList` уже использует injected `localizedNameProvider`; прямой `NSWorkspace.shared` находится только в default production implementation.
+- `UserDictionary` уже внедряет filesystem side effects через `storageURLProvider`, `createDirectory`, `fileExists`, `readData`, `writeData`; существующие тесты это подтверждают.
+- В `LearningCache` обнаружен небольшой DI-пробел: `LearnedEntry.id` создавался через прямой `UUID()`, что усложняло детерминированную проверку UI entry identity.
+
+**Что изменено:**
+- В `LearningCache` добавлен injected `makeEntryID` closure с production default `UUID.init`.
+- `LearningCache.LearnedEntry.id` теперь передается явно при построении UI-модели.
+- В `LearningCacheTests` добавлен тест `allEntriesUsesInjectedIDFactory`, который проверяет детерминированный ID без реального UUID side effect.
+
+**Результат проверки:**
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/LearningCacheTests` — 9 тестов, `** TEST SUCCEEDED **`.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — 257 тестов в 38 наборах, `** TEST SUCCEEDED **`.
+
+**Вывод:** DI/testability слой стал чуть строже: `LearningCache` теперь полностью детерминируем в тестах не только по storage/clock, но и по generated UI identity.
+
+### Шаг 102. DI/testability audit для PresentationModeDetector
+
+**Дата:** 2026-05-15
+
+**Цель шага:** продолжить DI/testability-проход для production-компонентов, которые читают runtime-состояние macOS.
+
+**Что проверено:** `PresentationModeDetector` уже использует инъекцию `frontmostBundleIDProvider` и `presentationBundleIDs`, поэтому тесты не зависят от реального `NSWorkspace.shared` и текущего активного приложения.
+
+**Что изменено:** provider активного bundle id явно помечен как `@MainActor`, включая stored closure и параметр initializer. Это делает контракт Swift 6 честнее: доступ к `NSWorkspace.shared.frontmostApplication` и тестовые stubs выполняются в той же main-actor изоляции, что и сам detector.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/PresentationModeDetectorTests` — `** TEST SUCCEEDED **`, 5 тестов.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 257 тестов в 38 suites.
+
+**Вывод:** поведение suppression для презентационных приложений не изменено, но dependency-injection контракт стал точнее для Swift 6 strict concurrency и безопаснее для дальнейших тестовых сценариев.
+
+### Шаг 103. Swift 6 actor-contract audit для KeyboardEventTap
+
+**Дата:** 2026-05-15
+
+**Цель шага:** проверить самый близкий к macOS runtime слой обработки клавиатурных событий: event tap, hotkey routing, synthetic-event filter и передачу событий в pipeline.
+
+**Что проверено:** `KeyboardEventTap` сохраняет синхронный callback path через `MainActor.assumeIsolated`, что важно для корректного подавления hotkey events: если заменить это на асинхронный `Task`, событие уже успеет пройти в систему до решения hotkey handler. Также проверены существующие тесты на hotkey consumption, passthrough, autorepeat, synthetic events и disabled tap events.
+
+**Что изменено:** closure properties `onKeyEvent` и `hotkeyHandler` явно помечены как `@MainActor`. Это не меняет runtime-поведение, но фиксирует реальный контракт: обработчики вызываются из main-run-loop callback после проверки main thread и main-actor bridge.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/KeyboardEventTapTests` — `** TEST SUCCEEDED **`, 5 тестов.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 257 тестов в 38 suites.
+
+**Вывод:** event tap сохранил прежнее поведение, а границы Swift 6 actor isolation стали точнее. Это снижает риск случайного подключения обработчиков, которые подразумевают выполнение вне main actor.
+
+### Шаг 104. Lifecycle и actor-contract audit для FocusedAppObserver
+
+**Дата:** 2026-05-15
+
+**Цель шага:** проверить runtime-наблюдатель активного приложения, который поставляет `bundleID`, `localizedName` и secure-field state в pipeline.
+
+**Что проверено:** `FocusedAppObserver` уже имел хорошие DI-границы: `roleProvider`, `currentAppSnapshotProvider`, `observeWorkspaceActivation` и `removeWorkspaceObserver` передаются через initializer, поэтому тесты не зависят от реального `NSWorkspace` и AX subsystem.
+
+**Что изменено:**
+
+- `onChange`, `WorkspaceActivationObserver` и `removeWorkspaceObserver` явно зафиксированы как `@MainActor` callbacks.
+- `start()` стал idempotent через внутренний `isStarted`, чтобы повторный вызов не регистрировал второй workspace observer и не создавал дублирующие callbacks.
+- Добавлен тест `startIsIdempotentAndDoesNotRegisterDuplicateObservers`.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/FocusedAppObserverTests` — `** TEST SUCCEEDED **`, 6 тестов.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 258 тестов в 38 suites.
+
+**Вывод:** observer стал безопаснее при повторном lifecycle-вызове и точнее по Swift 6 actor isolation. Поведение публикации начального snapshot и обработки activation events сохранено.
+
+### Шаг 105. Lifecycle и actor-contract audit для SecureInputObserver
+
+**Дата:** 2026-05-15
+
+**Цель шага:** проверить runtime-наблюдатель secure input state, который сообщает UI и pipeline, что macOS временно перехватила глобальный поток клавиатурных событий.
+
+**Что проверено:** `SecureInputObserver` уже имел хорошие DI-границы: `secureInputStatusProvider` и `pollingTimerFactory` инжектируются через initializer, а `start()` / `stop()` уже покрывали базовую idempotency.
+
+**Что изменено:**
+
+- `onChange` явно помечен как `@MainActor`, чтобы callback-контракт соответствовал фактической main-actor изоляции observer.
+- Добавлен тест `startAfterStopCreatesNewPollingToken`, который подтверждает корректный lifecycle restart: после `stop()` следующий `start()` создает новый polling token и оба token корректно инвалидируются.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/SecureInputObserverTests` — `** TEST SUCCEEDED **`, 4 теста.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 259 тестов в 38 suites.
+
+**Вывод:** secure-input observer сохранил прежнее поведение, но его callback isolation стал точнее для Swift 6, а lifecycle restart теперь закреплен тестом.
+
+### Шаг 106. DI и lifecycle audit для AccessibilityPermission
+
+**Дата:** 2026-05-15
+
+**Цель шага:** проверить boundary вокруг macOS Accessibility trust: чтение текущего статуса, запрос системного prompt, открытие System Settings и polling во время onboarding.
+
+**Что проверено:** `AccessibilityPermission` уже имел хорошие DI-границы: `trustStatusProvider`, `trustPromptRequester`, `systemSettingsOpener` и `pollingTimerFactory` передаются через initializer. `onTrustGranted` уже был явно `@MainActor`, а базовая idempotency `startPolling()` / `stopPolling()` была покрыта тестом.
+
+**Что изменено:**
+
+- Polling interval вынесен в initializer как `pollingInterval` с production default `1.0`.
+- `PollingTimerFactory` теперь получает `TimeInterval` явно, вместо скрытой константы внутри default closure.
+- Существующий тест polling дополнен проверкой default interval forwarding.
+- Добавлен тест `startAfterStopCreatesNewPollingTokenWithInjectedInterval`, который подтверждает корректный restart lifecycle и передачу кастомного interval в новый polling token.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/AccessibilityPermissionTests` — `** TEST SUCCEEDED **`, 6 тестов.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 260 тестов в 38 suites.
+
+**Вывод:** Accessibility trust polling стал более явно конфигурируемым и лучше тестируемым без изменения production default. Lifecycle restart после `stopPolling()` теперь закреплен отдельным тестом.
+
+### Шаг 107. Idempotency audit для LaunchAtLoginManager
+
+**Дата:** 2026-05-15
+
+**Цель шага:** проверить boundary вокруг macOS `SMAppService` для автозапуска при входе в систему.
+
+**Что проверено:** `LaunchAtLoginManager` уже использует DI для `statusProvider`, `registerService` и `unregisterService`, поэтому тесты не вызывают реальный `SMAppService`.
+
+**Что изменено:**
+
+- `setEnabled(true)` теперь возвращает `true` без вызова `registerService`, если статус уже `.enabled`.
+- `setEnabled(false)` теперь возвращает `true` без вызова `unregisterService`, если статус уже `.notRegistered`.
+- Добавлены тесты `setEnabledIsNoOpWhenAlreadyEnabled` и `setDisabledIsNoOpWhenAlreadyNotRegistered`.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/LaunchAtLoginManagerTests` — `** TEST SUCCEEDED **`, 9 тестов.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 262 теста в 38 suites.
+
+**Вывод:** менеджер автозапуска стал idempotent: не вызывает лишние ServiceManagement side effects, когда нужное состояние уже достигнуто.
+
+### Шаг 108. Idempotency audit для OnboardingCompletionStore
+
+**Дата:** 2026-05-15
+
+**Цель шага:** проверить persistence-boundary для признака завершенного onboarding и убрать лишние записи в хранилище.
+
+**Что проверено:** `OnboardingCompletionStore` уже использует DI для чтения и записи состояния onboarding, поэтому тесты не зависят от реального `UserDefaults`.
+
+**Что изменено:**
+
+- `markCompleted()` теперь не вызывает `writeCompleted(true)`, если onboarding уже отмечен завершенным.
+- Добавлен тест `markCompletedDoesNotWriteWhenAlreadyCompleted`, фиксирующий idempotent-поведение.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/OnboardingCompletionStoreTests` — `** TEST SUCCEEDED **`, 3 теста.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 263 теста в 38 suites.
+
+**Вывод:** store стал более аккуратным по side effects: повторное завершение onboarding больше не порождает лишнюю запись в persistence-layer.
+
+### Шаг 109. Explicit result audit для DiagnosticsLogExporter
+
+**Дата:** 2026-05-15
+
+**Цель шага:** улучшить recoverable error handling в boundary, который экспортирует системные логи для диагностики.
+
+**Что проверено:** `DiagnosticsLogExporter` уже использует DI для запуска `log show` и записи файла, поэтому тесты не зависят от реального `/usr/bin/log` и файловой системы.
+
+**Что изменено:**
+
+- Добавлен `ExportResult` с явным результатом `.success` / `.failure(...)`.
+- Добавлен `ExportFailureReason` с отдельными причинами `logShowFailed` и `writeFailed`.
+- Старый `export(to:) -> Bool` сохранен как compatibility-wrapper для существующих UI call sites.
+- Тесты теперь проверяют не только boolean-результат, но и конкретную причину recoverable failure.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/DiagnosticsLogExporterTests` — `** TEST SUCCEEDED **`, 6 тестов.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 264 теста в 38 suites.
+
+**Вывод:** диагностика стала ближе к проектному правилу error handling: recoverable failure больше не сводится только к `Bool`, а имеет явную доменную причину без ломки текущего публичного поведения.
+
+### Шаг 110. Concurrency и test coverage audit для NotificationManager
+
+**Дата:** 2026-05-15
+
+**Цель шага:** усилить boundary вокруг `UNUserNotificationCenter`: явно зафиксировать main-actor side effects и покрыть notification-поведение отдельными deterministic tests.
+
+**Что проверено:** `NotificationManager` уже использует DI для `UNUserNotificationCenter` side effects, но отдельного тестового файла для этого сервиса не было.
+
+**Что изменено:**
+
+- Для injected closures добавлены typealias-ы с явной `@MainActor` изоляцией: delegate setter, authorization requester, category registrar, notification request sender, delivered-notification remover и deterministic ID factory.
+- Добавлен `NotificationManagerTests` на ключевые сценарии без обращения к реальному notification center.
+- Тестами зафиксированы: установка delegate, запрос authorization через injected requester, регистрация auto-switch категории с Undo action, deterministic notification request, idempotent clear pending notification и безопасная обработка ошибки отправки notification.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/NotificationManagerTests` — `** TEST SUCCEEDED **`, 6 тестов.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 270 тестов в 39 suites.
+
+**Вывод:** notification boundary стал лучше защищен под Swift 6 strict concurrency и получил самостоятельное покрытие, не зависящее от реальных macOS notification permissions.
+
+### Шаг 111. Concurrency и test coverage audit для SoundFeedbackPlayer
+
+**Дата:** 2026-05-15
+
+**Цель шага:** усилить небольшой feedback-boundary вокруг системного звука и зафиксировать deterministic-поведение через тесты.
+
+**Что проверено:** `SoundFeedbackPlayer` уже использует injected closure вместо прямой зависимости в тестируемом path, но closure не был явно `@MainActor`, а отдельного тестового файла для sound feedback не было.
+
+**Что изменено:**
+
+- Добавлен `PlaySound` typealias с явной `@MainActor` изоляцией для injected sound side effect.
+- Добавлен `SoundFeedbackPlayerTests`.
+- Тестами зафиксированы: вызов injected closure при включенном feedback, отсутствие вызова при disabled-state и непустые локализованные названия `SoundFeedbackKind`.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/SoundFeedbackPlayerTests` — `** TEST SUCCEEDED **`, 3 теста.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 273 теста в 40 suites.
+
+**Вывод:** sound feedback boundary стал явнее для Swift 6 strict concurrency и получил самостоятельное покрытие без обращения к реальному `NSSound`.
+
+### Шаг 112. Dependency Injection и test coverage audit для CapsLockGuard
+
+**Дата:** 2026-05-15
+
+**Цель шага:** убрать прямую зависимость тестируемой логики от реального Caps Lock / IOKit состояния и покрыть restore-сценарии deterministic-тестами.
+
+**Что проверено:** `CapsLockGuard` напрямую читал `CGEventSource.flagsState` и вызывал IOKit (`IOServiceGetMatchingService`, `IOServiceOpen`, `IOHIDSetModifierLockState`), поэтому поведение нельзя было надежно проверить без системного состояния.
+
+**Что изменено:**
+
+- Добавлены `ReadCapsLockState` и `SetCapsLockState` typealias-ы с явной `@MainActor` изоляцией.
+- `CapsLockGuard` получил initializer с injected closures для чтения и установки Caps Lock state.
+- Production path сохранен через default implementations `liveReadCapsLockState` и `liveSetCapsLockState`.
+- Добавлен `CapsLockGuardTests`.
+- Тестами зафиксированы: no-op при выключенном Caps Lock, disable/restore при включенном Caps Lock, отсутствие restore после failed disable и idempotent `restore()`.
+
+**Результат проверки:**
+
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/CapsLockGuardTests` — `** TEST SUCCEEDED **`, 4 теста.
+- `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 277 тестов в 41 suites.
+
+**Вывод:** Caps Lock boundary стал соответствовать DI-паттерну проекта: системные IOKit side effects остались в live defaults, а доменное поведение guard теперь проверяется без реального состояния клавиатуры.
+
+## Шаг 113. Аудит `SyntheticEventFilter`: явная граница синтетических событий
+
+Дата: 2026-05-15
+
+### Что проверено
+
+- Проверен низкоуровневый фильтр синтетических `CGEvent`, которым приложение помечает собственные события перед повторным вводом текста.
+- Убедились, что внешний код не зависит от конкретного magic-token: маркер теперь скрыт как `private static let` внутри `SyntheticEventFilter`.
+- Добавлены отдельные Swift Testing тесты для трех базовых инвариантов: обычное событие не считается синтетическим, помеченное событие распознается как синтетическое, а сама пометка не меняет тип события.
+- Первый точечный прогон поймал корректную Swift 6 проблему изоляции в новых тестах: обращения к `SyntheticEventFilter` должны выполняться из `@MainActor` контекста. Тестовый struct помечен `@MainActor`, после чего проверка стала детерминированной.
+
+### Что изменено
+
+- `LayoutSwitcher/EventTap/SyntheticEventFilter.swift`: magic-token сделан приватной деталью реализации.
+- `LayoutSwitcherTests/SyntheticEventFilterTests.swift`: добавлены тесты поведения фильтра синтетических событий.
+
+### Результат проверки
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/SyntheticEventFilterTests` — `** TEST SUCCEEDED **`, 3 теста.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 280 тестов в 42 suites.
+
+### Вывод
+
+Контур синтетических событий стал чуть безопаснее: внутренний маркер больше не является частью внешнего API, а базовое поведение фильтра теперь покрыто отдельными тестами. Это снижает риск случайной поломки защиты от feedback loop в event tap и retype-сценариях.
+
+## Шаг 114. Аудит `AXElementBridge`: тестовая защита вокруг Accessibility bridge
+
+Дата: 2026-05-15
+
+### Что проверено
+
+- Проверен низкоуровневый мост `CFTypeRef` → `AXUIElement`, который централизует единственный небезопасный `unsafeDowncast` для Accessibility API.
+- Production-код уже содержит правильную защиту через `CFGetTypeID(value) == AXUIElementGetTypeID()`, поэтому runtime-поведение не изменялось.
+- Добавлены отдельные Swift Testing тесты, фиксирующие два ключевых инварианта: настоящий `AXUIElement` проходит проверку, посторонние Core Foundation значения отвергаются до небезопасного приведения типа.
+
+### Что изменено
+
+- `LayoutSwitcherTests/AXElementBridgeTests.swift`: добавлен новый suite с 3 тестами для `AXElementBridge`.
+
+### Результат проверки
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/AXElementBridgeTests` — `** TEST SUCCEEDED **`, 3 теста.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 283 теста в 43 suites.
+
+### Вывод
+
+Граница вокруг Accessibility bridge стала надежнее документирована тестами. Это важно, потому что `unsafeDowncast` остается допустимым только при сохранении предварительной проверки Core Foundation type ID; теперь этот контракт защищен регрессией.
+
+## Шаг 115. Аудит `KeyCodeEncoder`: детерминированные тесты без зависимости от системных раскладок
+
+Дата: 2026-05-15
+
+### Что проверено
+
+- Проверен `KeyCodeEncoder`, который подбирает `keyCode` и modifier flags для символа через Carbon `UCKeyTranslate`.
+- Найдена проблема качества тестов: `KeyCodeEncoderTests` зависели от реальных системных keyboard layouts через `InputSourceManager`. Это нарушало правило проекта о том, что тесты не должны зависеть от состояния macOS, установленных раскладок или пользовательского окружения.
+- Production-поведение сохранено: публичный вызов `KeyCodeEncoder.encode(_:layoutData:)` по умолчанию продолжает использовать `LMGetKbdType()` и `UCKeyTranslate`.
+- Для тестов добавлена инъекция `keyboardType` и `keyTranslator`, чтобы проверять алгоритм перебора keycode/modifier combinations через детерминированные stubs.
+- Swift 6 проверка поймала два полезных нюанса во время targeted-прогона: `KeyTranslator` должен явно быть `@MainActor`, а Carbon status constants в тестовом stub должны возвращаться как `OSStatus`.
+
+### Что изменено
+
+- `LayoutSwitcher/EventTap/KeyCodeEncoder.swift`: добавлен internal `KeyTranslator`, параметры `keyboardType` и `keyTranslator` с production defaults; default translator вызывает `UCKeyTranslate`.
+- `LayoutSwitcherTests/KeyCodeEncoderTests.swift`: системно-зависимые проверки заменены на 5 детерминированных тестов с injected translator.
+
+### Результат проверки
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/KeyCodeEncoderTests` — после исправления Swift 6 isolation/type issues: `** TEST SUCCEEDED **`, 5 тестов.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 283 теста в 43 suites.
+
+### Вывод
+
+`KeyCodeEncoder` стал лучше соответствовать правилам проекта по DI и тестируемости: side-effect boundary вокруг Carbon теперь можно стабильно тестировать без реальных системных раскладок. Это снижает риск flaky-тестов на разных машинах и одновременно делает Swift 6 isolation-контракт translator-а явным.
+
+## Шаг 116. Аудит `SmartPaste`: проверка side effects без реального pasteboard и раскладок
+
+Дата: 2026-05-15
+
+### Что проверено
+
+- Проверен `SmartPaste`, который читает clipboard, определяет язык текста, при необходимости переключает input source и отправляет синтетический `⌘V`.
+- Production-код уже использует DI для pasteboard, key posting и sleep, поэтому runtime-поведение не менялось.
+- Найден пробел в тестовом контракте: существующие тесты проверяли язык и факт paste, но почти не фиксировали side effects вокруг layout switching.
+- Добавлены проверки двух важных сценариев: когда текущая раскладка уже целевая, `select` и `refresh` не вызываются; когда целевая русская раскладка отличается от текущей, вызывается `select`, затем `refresh`, добавляется pre-paste delay и отправляется `⌘V`.
+- `FakeInputSources` расширен счетчиком `refreshCount`, чтобы тесты могли проверять refresh side effect без обращения к реальной системе.
+
+### Что изменено
+
+- `LayoutSwitcherTests/FakeInputSources.swift`: добавлен `refreshCount`, `refresh()` теперь увеличивает счетчик вместо пустого no-op.
+- `LayoutSwitcherTests/SmartPasteTests.swift`: добавлен tracking injected sleep durations и 2 новых теста для layout switching/no-switching сценариев.
+
+### Результат проверки
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/SmartPasteTests` — `** TEST SUCCEEDED **`, 8 тестов.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 285 тестов в 43 suites.
+
+### Вывод
+
+`SmartPaste` стал лучше защищен тестами на уровне side effects. Теперь проверяется не только результат определения языка, но и фактический контракт переключения раскладки: отсутствие лишнего switch при уже подходящей раскладке и корректный switch/refresh/delay перед синтетическим paste при смене языка.
+
+## Шаг 117. Аудит `SelectionConverter`: детерминированное покрытие clipboard fallback
+
+Дата: 2026-05-15
+
+### Что проверено
+
+- Проверен `SelectionConverter`, который выполняет ручную конвертацию выделенного текста: сначала через Accessibility selected text, затем через clipboard fallback.
+- Production-код уже имеет DI для focused AX element, pasteboard read/write, key posting и sleep, поэтому runtime-поведение не менялось.
+- Найден пробел: для `SelectionConverter` не было отдельного test suite, хотя компонент управляет несколькими side effects (`⌘C`, чтение clipboard, запись конвертированного текста, `⌘V`, восстановление исходного clipboard).
+- Добавлены тесты clipboard fallback без реального Accessibility, pasteboard и keyboard events: успешная конвертация `ghbdtn` → `привет`, отсутствие selection после `⌘C`, слишком длинное выделение.
+- Проверено, что успешный fallback выполняет ожидаемую последовательность: `Cmd+C`, задержка, запись конвертированного текста, `Cmd+V`, задержка, восстановление исходного clipboard.
+
+### Что изменено
+
+- `LayoutSwitcherTests/SelectionConverterTests.swift`: добавлен новый suite с 3 тестами для clipboard fallback `SelectionConverter`.
+
+### Результат проверки
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/SelectionConverterTests` — `** TEST SUCCEEDED **`, 3 теста.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` — `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` — `** TEST SUCCEEDED **`, 288 тестов в 44 suites.
+
+### Вывод
+
+`SelectionConverter` получил базовую защиту самого рискованного fallback-пути без обращения к реальному clipboard или AX. Это снижает риск регрессий в ручной конвертации выделенного текста и подтверждает, что исходный clipboard восстанавливается после успешной вставки.
+
+## Шаг 118. Аудит SelectionConverter: отказ от лишней вставки и restore без исходного clipboard
+
+Дата: 2026-05-15
+
+Цель шага: закрыть два краевых сценария clipboard fallback в `SelectionConverter`, которые важны для пользовательской безопасности: не вставлять текст, если конвертация фактически ничего не изменила, и не восстанавливать clipboard, если до операции исходного значения не было.
+
+Что изменено:
+
+- В `LayoutSwitcherTests/SelectionConverterTests.swift` добавлен тест `clipboardFallbackDoesNotPasteWhenConversionDoesNotChangeText()`.
+- В `LayoutSwitcherTests/SelectionConverterTests.swift` добавлен тест `clipboardFallbackSkipsRestoreWhenOriginalClipboardIsNil()`.
+- Production-код `LayoutSwitcher/Mapping/SelectionConverter.swift` не изменялся: текущая реализация уже корректно проходит оба сценария.
+
+Проверенные гарантии:
+
+- Если clipboard fallback получил выделенный текст, но конвертация не изменила значение, результат остается `.failure(.conversionFailed)`, запись в clipboard не выполняется и вставка не отправляется.
+- Если исходный clipboard был пустым (`nil`), успешная конвертация вставляет исправленный текст, но не делает лишний restore-запись после операции.
+- Оба сценария проверяют не только результат, но и фактические side effects: отправленные клавиши, записи в clipboard и контролируемые задержки.
+
+Результаты проверки:
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/SelectionConverterTests` -> `** TEST SUCCEEDED **`, 5 тестов в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 290 тестов в 44 suites.
+
+Вывод: clipboard fallback в `SelectionConverter` теперь лучше защищен тестами от двух регрессий: случайной вставки неизмененного текста и лишнего восстановления пустого исходного clipboard. Это повышает доверие к ручной конвертации выделения без расширения production-поверхности.
+
+## Шаг 119. Аудит HotkeyRegistry: читаемое отображение Smart Paste hotkey
+
+Дата: 2026-05-15
+
+Цель шага: убрать небольшой UX-дефект в отображении дефолтного хоткея Smart Paste. Действие `smartPaste` использует virtual key code `9`, но `HotkeyDefinition.displayText` не имел человекочитаемого имени для этой клавиши и мог показывать пользователю техническое `k9` вместо `V`.
+
+Что изменено:
+
+- В `LayoutSwitcher/Hotkeys/HotkeyRegistry.swift` добавлено отображение key code `9` как `V`.
+- В `LayoutSwitcherTests/HotkeyRegistryTests.swift` добавлен тест `smartPasteDefaultBindingDisplaysReadableKeyName()`.
+
+Проверенные гарантии:
+
+- Дефолтный хоткей Smart Paste теперь отображается как `⌃⌥⌘V`, а не как `⌃⌥⌘k9`.
+- Тест фиксирует именно пользовательскую строку `displayText`, а не только внутренний key code.
+- Изменение не затрагивает matching, persistence или конфликтную логику хоткеев.
+
+Результаты проверки:
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/HotkeyRegistryTests` -> `** TEST SUCCEEDED **`, 11 тестов в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 291 тест в 44 suites.
+
+Вывод: настройки хоткеев стали понятнее для пользователя, а регрессия в отображении Smart Paste теперь прикрыта автоматическим тестом. Это маленькое исправление, но оно снижает ощущение «сырости» интерфейса настроек.
+
+## Шаг 120. Аудит HotkeyRegistry: поведенческая фиксация Smart Paste hotkey
+
+Дата: 2026-05-15
+
+Цель шага: дополнить предыдущую UX-правку для Smart Paste поведенческой проверкой. После того как отображение `⌃⌥⌘V` стало человекочитаемым, важно зафиксировать, что тот же дефолтный shortcut действительно матчится как действие `.smartPaste`.
+
+Что изменено:
+
+- В `LayoutSwitcherTests/HotkeyRegistryTests.swift` добавлен тест `defaultSmartPasteBindingMatchesControlOptionCommandV()`.
+- Production-код не изменялся: текущая логика matching уже корректно обрабатывает `Control + Option + Command + V`.
+
+Проверенные гарантии:
+
+- Событие `keyDown` с key code `9` и модификаторами `Control + Option + Command` возвращает `.smartPaste`.
+- Тест закрывает поведенческую сторону дефолтного Smart Paste hotkey, а предыдущий шаг закрывает пользовательское отображение `displayText`.
+- Matching, persistence и обработка конфликтов хоткеев остались без изменений.
+
+Результаты проверки:
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/HotkeyRegistryTests` -> `** TEST SUCCEEDED **`, 12 тестов в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 292 теста в 44 suites.
+
+Вывод: дефолтный Smart Paste hotkey теперь защищен с двух сторон: пользователь видит корректное `⌃⌥⌘V`, а `HotkeyRegistry` гарантированно сопоставляет это сочетание с `.smartPaste`.
+
+## Шаг 121. Аудит HotkeyRegistry: защита локализованных title/subtitle действий
+
+Дата: 2026-05-15
+
+Цель шага: закрепить качество пользовательского интерфейса настроек хоткеев. Для каждого `HotkeyAction` важно иметь не пустые и реально локализованные title/subtitle, иначе пользователь может увидеть сырой ключ вида `settings.hotkeys...`.
+
+Что изменено:
+
+- В `LayoutSwitcherTests/HotkeyRegistryTests.swift` добавлен тест `allHotkeyActionsHaveLocalizedTitleAndSubtitle()`.
+- Production-код не изменялся: текущие локализации уже корректно покрывают все действия хоткеев.
+
+Проверенные гарантии:
+
+- Все действия из `HotkeyAction.ordered` имеют непустой `localizedTitle`.
+- Все действия из `HotkeyAction.ordered` имеют непустой `localizedSubtitle`.
+- Title/subtitle не возвращаются как сырой localization key с префиксом `settings.hotkeys.`.
+- Проверка дополняет предыдущие шаги по Smart Paste: теперь слой хоткеев защищен не только по matching/displayText, но и по пользовательским текстам.
+
+Результаты проверки:
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/HotkeyRegistryTests` -> `** TEST SUCCEEDED **`, 13 тестов в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 293 теста в 44 suites.
+
+Вывод: пользовательские тексты действий хоткеев теперь защищены от регрессии локализации. Это снижает риск увидеть в настройках технические ключи вместо понятных названий и описаний.
+
+## Шаг 122. Аудит локализаций: структурная проверка hotkey-ключей в Localizable.xcstrings
+
+Дата: 2026-05-15
+
+Цель шага: закрыть релизный риск, при котором настройки хоткеев в одной из поддерживаемых локалей могут показать пустую строку или сырой ключ локализации. Runtime-тесты уже проверяют текущую локаль, но не гарантируют полноту `.xcstrings` для `en`, `ru`, `ro`, `uk`.
+
+Что изменено:
+
+- Добавлен новый файл `LayoutSwitcherTests/LocalizationCatalogTests.swift`.
+- Новый тест `hotkeyActionKeysAreTranslatedForSupportedLanguages()` читает `LayoutSwitcher/Localizable.xcstrings` как JSON-каталог.
+- Production-код не изменялся: текущий каталог локализаций уже содержит корректные значения для проверяемых ключей.
+
+Проверенные гарантии:
+
+- Hotkey title/subtitle ключи присутствуют в `Localizable.xcstrings`.
+- Для каждого hotkey title/subtitle ключа есть переводы для `en`, `ru`, `ro`, `uk`.
+- Каждая проверяемая строка имеет состояние `translated`.
+- Значение перевода не пустое и не равно сырому localization key.
+
+Результаты проверки:
+
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/LocalizationCatalogTests` -> `** TEST SUCCEEDED **`, 1 тест в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 294 теста в 45 suites.
+
+Вывод: слой локализации для настроек хоткеев теперь защищен не только runtime-проверками, но и прямой структурной проверкой `.xcstrings` по всем поддерживаемым языкам. Это снижает риск регрессии при добавлении новых действий или обновлении переводов перед релизом.
+
+## Шаг 123. Аудит локализаций: полнота системных InfoPlist-строк
+
+Дата: 2026-05-15
+
+Цель шага: закрыть системный релизный риск, при котором macOS может показывать пустые или непереведенные значения имени bundle/copyright в свойствах приложения, Finder или системных диалогах.
+
+Что изменено:
+- В `LayoutSwitcherTests/LocalizationCatalogTests.swift` добавлен тест `infoPlistKeysAreTranslatedForSupportedLanguages()`.
+- В `LayoutSwitcher/InfoPlist.xcstrings` заполнены `CFBundleName` для `en`, `ru`, `ro`, `uk`.
+- В `LayoutSwitcher/InfoPlist.xcstrings` заполнен `NSHumanReadableCopyright` для `en`, `ru`, `ro`, `uk`.
+- Строки переведены в состояние `translated`.
+
+Найденная проблема:
+- `CFBundleName` был только в `en` со state `new`.
+- `NSHumanReadableCopyright` был пустым и не имел переводов для `ru`, `ro`, `uk`.
+
+Проверенные гарантии:
+- Все ключи `InfoPlist.xcstrings` имеют непустые значения для `en`, `ru`, `ro`, `uk`.
+- Все проверяемые stringUnit имеют state `translated`.
+- Системные строки приложения больше не остаются в состоянии `new` или пустыми.
+
+Результаты проверки:
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/LocalizationCatalogTests` -> `** TEST SUCCEEDED **`, 2 теста в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 295 тестов в 45 suites.
+
+Вывод: системные строки приложения теперь локализованы и защищены тестом от возврата пустых/новых значений в `InfoPlist.xcstrings`.
+
+## Шаг 124. Аудит локализаций: защита от неиспользуемых Localizable-ключей
+
+Дата: 2026-05-15
+
+Цель шага: уменьшить шум в `Localizable.xcstrings` и добавить регрессионную защиту от накопления мертвых пользовательских строк.
+
+Что изменено:
+- В `LayoutSwitcherTests/LocalizationCatalogTests.swift` добавлен тест `localizableKeysAreReferencedByApplicationSources()`.
+- Тест проверяет, что каждый ключ из `Localizable.xcstrings` либо явно используется в Swift-исходниках приложения, либо относится к разрешенному динамическому пространству ключей.
+- Для динамической справки явно разрешен префикс `help.section.`, потому что `HelpContent` строит ключи через `help.section.\(id)`.
+- Из `LayoutSwitcher/Localizable.xcstrings` удалены 13 подтвержденных неиспользуемых ключей.
+
+Удаленные ключи:
+- `%@ (%@)`
+- `%@ → %@`
+- `%@ ↔ %@`
+- `detection.both`
+- `detection.dict-hit`
+- `detection.ngram`
+- `onboarding.hotkeys.convert-selection`
+- `onboarding.hotkeys.manual-toggle`
+- `onboarding.hotkeys.snooze`
+- `onboarding.hotkeys.undo`
+- `statusitem.menu.auto-switch-failed`
+- `statusitem.menu.recent-switches`
+- `statusitem.menu.undo-last`
+
+Проверенные гарантии:
+- Новые неиспользуемые ключи в `Localizable.xcstrings` будут обнаруживаться targeted-тестом.
+- Динамические help-ключи не дают ложноположительного падения теста.
+- Каталог локализаций компилируется после чистки.
+
+Результаты проверки:
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/LocalizationCatalogTests` -> `** TEST SUCCEEDED **`, 3 теста в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 296 тестов в 45 suites.
+
+Вывод: `Localizable.xcstrings` стал чище, а проект получил автоматическую защиту от повторного накопления мертвых локализационных ключей.
+
+## Шаг 125. Аудит локализаций: проверка Swift-ссылок на существующие ключи
+
+Дата: 2026-05-15
+
+Цель шага: закрыть обратный риск локализационного каталога — ситуацию, когда Swift-код ссылается на `String(localized:)` ключ, отсутствующий в `Localizable.xcstrings`.
+
+Что изменено:
+- В `LayoutSwitcherTests/LocalizationCatalogTests.swift` добавлен тест `applicationLocalizedStringKeysExistInCatalog()`.
+- Добавлен helper `applicationSourceText()`, чтобы оба локализационных теста использовали один способ чтения Swift-исходников приложения.
+- Добавлены helper-методы `localizedStringKeys(in:)` и `stringLiterals(in:)`, которые извлекают literal-ключи из вызовов `String(localized:)`.
+- Тест учитывает и простые вызовы `String(localized: "key")`, и выражения с несколькими literal-ключами внутри аргумента, например ternary-выбор ключа.
+- Динамические вызовы без literal-ключей не проверяются этим тестом, чтобы не создавать ложные падения.
+
+Проверенные гарантии:
+- Каждый literal-ключ, переданный в `String(localized:)` в Swift-коде приложения, существует в `Localizable.xcstrings`.
+- Если UI-код начнет ссылаться на удаленный или забытый ключ, targeted-тест упадет с точным именем ключа.
+- Предыдущая гарантия от неиспользуемых ключей сохранена.
+
+Результаты проверки:
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/LocalizationCatalogTests` -> `** TEST SUCCEEDED **`, 4 теста в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 297 тестов в 45 suites.
+
+Вывод: локализационный слой теперь защищен в обе стороны: каталог не должен накапливать мертвые ключи, а Swift-код не должен ссылаться на отсутствующие пользовательские строки.
+
+## Шаг 126. Стабилизация unit-тестов: отключение live side effects AppDelegate под XCTest
+
+Дата: 2026-05-15
+
+Цель шага: убрать системные побочные эффекты из unit-test окружения. До правки тестовый host запускал `AppDelegate.applicationDidFinishLaunching`, из-за чего во время unit suite поднимались live-подсистемы приложения: Carbon hotkeys, notifications, focused-app observer, secure-input observer и global event tap.
+
+Что изменено:
+- В `LayoutSwitcher/App/AppDelegate.swift` добавлено раннее определение XCTest-окружения через `XCTestConfigurationFilePath` и наличие класса `XCTestCase`.
+- `applicationDidFinishLaunching(_:)` теперь сразу выходит под XCTest и не запускает live app startup side effects.
+- В `LayoutSwitcherTests/AppDelegateTests.swift` добавлен тест `applicationLaunchSkipsLiveServicesUnderXCTest()`.
+- Тест проверяет, что при запуске launch-пути под XCTest не стартует `KeyboardEventTap` и не создается `StatusItemController`.
+
+Почему это важно:
+- Unit-тесты больше не зависят от реального Accessibility-состояния macOS.
+- Unit-тесты не регистрируют global event tap и Carbon hotkeys через основной AppDelegate.
+- Unit-тесты не дергают запросы notification authorization через основной launch-путь.
+- Логи тестов стали чище: вместо старта приложения фиксируется `XCTest launch detected; skipping live app startup side effects`.
+
+Проверенные гарантии:
+- Production launch path не меняется: guard срабатывает только в XCTest-окружении.
+- AppDelegate можно безопасно инстанцировать и вызывать в unit-тесте без live-системных side effects.
+- Существующие тесты продолжают проходить.
+
+Результаты проверки:
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/AppDelegateTests` -> `** TEST SUCCEEDED **`, 1 тест в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 298 тестов в 46 suites.
+
+Вывод: unit-test окружение стало безопаснее и стабильнее: основной AppDelegate больше не запускает системные подсистемы приложения при прогоне тестов.
+
+## Шаг 127. Оптимизация тестов и runtime: кэширование словарей
+
+Дата: 2026-05-15
+
+Цель шага: убрать повторную тяжелую загрузку словарей при создании `LayoutDetector.defaultMultilingual()` и ускорить unit-test suite без изменения поведения детектора.
+
+Найденная проблема:
+- `BundledDictionaryLoader.loadOrEmbedded(language:)` каждый раз заново читал bundled `.txt`-ресурсы словарей.
+- `EmbeddedDictionaries.english()/russian()/ukrainian()/romanian()` каждый раз создавали новый `InMemoryDictionary` из больших массивов fallback-корпуса.
+- В тестах это приводило к многократным логам вида `Loaded ... words for ...` и заметно увеличивало время полного suite.
+
+Что изменено:
+- В `LayoutSwitcher/Dictionary/BundledDictionaryLoader.swift` добавлен read-only cache `cachedFallbacks` для `en`, `ru`, `uk`, `ro`.
+- В `LayoutSwitcher/Dictionary/EmbeddedDictionaries.swift` добавлены cached instances для embedded fallback-словарей.
+- `InMemoryDictionary` в `LayoutSwitcher/Dictionary/WordDictionary.swift` помечен как `@unchecked Sendable`, потому что объект immutable: язык и normalized word set задаются только в initializer и дальше не мутируют.
+- В `LayoutSwitcherTests/DictionaryTests.swift` добавлен тест `bundledFallbacksAreCachedPerLanguage()`.
+
+Почему это безопасно:
+- `InMemoryDictionary` не содержит изменяемого состояния после инициализации.
+- Возврат одного и того же immutable-экземпляра не меняет результаты `contains(_:)` или `size`.
+- Кэш расположен на уровне fallback-словарей, а пользовательские словари остаются динамическими и не кэшируются этим изменением.
+
+Проверенные гарантии:
+- `BundledDictionaryLoader.loadOrEmbedded(language:)` возвращает один и тот же экземпляр для повторных запросов одного языка.
+- Embedded fallback-словари также не пересоздаются на каждый вызов.
+- Полный suite сохранил поведение детектора и pipeline.
+
+Результаты проверки:
+- Targeted: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS' -only-testing:LayoutSwitcherTests/DictionaryTests` -> `** TEST SUCCEEDED **`, 6 тестов в 1 suite.
+- Build: `xcodebuild build -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** BUILD SUCCEEDED **`.
+- Full suite: `xcodebuild test -scheme LayoutSwitcher -destination 'platform=macOS'` -> `** TEST SUCCEEDED **`, 299 тестов в 46 suites, test run после старта Swift Testing прошел за 2.283 секунды.
+
+Вывод: словари теперь загружаются один раз на процесс и переиспользуются как immutable dependencies. Это снижает шум в логах и ускоряет тестовый прогон без изменения пользовательского поведения.
+
+## Шаг 128. Документирование Sendable-инварианта и прямой тест embedded-кэша
+
+**Наблюдение:** после кэширования словарей важно, чтобы архитектурная причина `@unchecked Sendable` была видна прямо в коде, а cached behavior `EmbeddedDictionaries` проверялся напрямую, не только через `BundledDictionaryLoader`.
+
+**Изменения:**
+- добавлен DocC-комментарий к `InMemoryDictionary`, фиксирующий инвариант неизменяемости после инициализации;
+- добавлен тест `embeddedDictionariesAreCachedPerLanguage`, проверяющий повторное использование экземпляров для `en`, `ru`, `uk`, `ro`;
+- сохранен existing fallback-cache test для `BundledDictionaryLoader`.
+
+**Ожидаемый эффект:** меньше риска случайно вернуть дорогое пересоздание больших словарей и понятнее основание для Swift 6 `Sendable`-безопасности.
+
+**Статус:** verified. Targeted DictionaryTests: `** TEST SUCCEEDED **`, 7 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 300 tests / 46 suites.
+
+## Шаг 129. Кэширование RomanianDiacriticResolver для user dictionary path
+
+**Наблюдение:** `LayoutDetector.defaultMultilingual(user...)` пересоздавал `RomanianDiacriticResolver` из полного embedded-словаря Romanian плюс user dictionary при каждом обращении к provider. Это дорого: embedded Romanian corpus содержит большой набор слов, а resolver строит индекс вариантов по plain key.
+
+**Изменения:**
+- добавлен `RomanianDiacriticResolverCache`, изолированный на `@MainActor`;
+- кэш хранит snapshot последнего набора user words;
+- resolver и plain overrides пересобираются только когда `userRomanian.words` реально меняется;
+- `LayoutDetector.defaultMultilingual(user...)` теперь использует один cache instance для `romanianDiacriticResolverProvider` и `romanianPlainOverrideProvider`;
+- добавлен тест `romanianDiacriticResolverCacheRebuildsOnlyAfterUserWordsChange`.
+
+**Ожидаемый эффект:** меньше CPU/allocations при включенных Romanian diacritics без потери behavior, где user dictionary может обновиться уже после создания detector.
+
+**Статус:** verified. Первый targeted run поймал compile-error `[String]` vs `Set<String>` в default argument; исправлено через `Set(EmbeddedDictionaries.romanian().allWords)`. Targeted LayoutDetectorTests: `** TEST SUCCEEDED **`, 25 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 301 tests / 46 suites.
+
+## Шаг 130. Автоматический guard против force operations в Swift-коде
+
+**Наблюдение:** ручная проверка не нашла `try!`, `as!`, force unwrap в рабочем коде и тестах; единственное совпадение было в комментарии теста про строку `z!`. Так как `AGENTS.md` запрещает force unwrap, этот стандарт лучше закрепить автоматическим тестом.
+
+**Изменения:**
+- добавлен `SwiftSafetyRulesTests`;
+- тест сканирует production sources в `LayoutSwitcher`;
+- расширение guard на `LayoutSwitcherTests` временно отложено: targeted-прогон показал legacy force unwraps в старых test fixtures, это отдельный cleanup-пласт;
+- перед анализом удаляются комментарии и строковые литералы, чтобы не ловить false positive из текста/примеров;
+- проверяются `try!`, `as!` и postfix force unwrap.
+
+**Ожидаемый эффект:** будущие нарушения safety rule будут ловиться в regression suite до попадания в сборку/релиз.
+
+**Статус:** verified. Первый широкий targeted run обнаружил, что application sources уже чистые, а legacy test fixtures еще содержат force unwraps; guard ограничен production sources. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 1 test / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 302 tests / 47 suites.
+
+## Шаг 131. Уточнение Swift safety scanner для prefix-negation
+
+**Наблюдение:** при попытке расширить guard на тестовые файлы scanner создавал false positives для обычной prefix-негации (`!flag`, `#expect(!value.isEmpty)`, `!(...)`). Это могло привести к бессмысленным правкам тестов вместо реального удаления force unwrap.
+
+**Изменения:**
+- уточнено правило postfix force unwrap: `!` считается нарушением только после выражения-терминатора (`letter`, `number`, `_`, `)`, `]`);
+- `try!` и `as!` остаются отдельными нарушениями и больше не дублируются как force unwrap;
+- добавлен self-test `scannerIgnoresPrefixNegationAndFindsForceOperations`.
+
+**Ожидаемый эффект:** safety guard становится точнее и пригоднее для постепенного расширения на `LayoutSwitcherTests` без шума от валидного Swift-кода.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 2 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 303 tests / 47 suites.
+
+## Шаг 132. Расширение force-operation guard на тестовый код
+
+**Наблюдение:** после уточнения scanner прямой поиск не показал реальных postfix force unwrap в `LayoutSwitcherTests`; предыдущие срабатывания были false positives на prefix-негацию. Значит guard можно безопасно расширить с production sources на тестовый код.
+
+**Изменения:**
+- `SwiftSafetyRulesTests.swiftSourcesDoNotUseForceOperations` теперь сканирует `LayoutSwitcher` и `LayoutSwitcherTests`;
+- self-test scanner остается в suite и защищает от регресса в распознавании prefix negation vs postfix force unwrap.
+
+**Ожидаемый эффект:** весь Swift-код проекта, включая тесты, теперь автоматически защищен от `try!`, `as!` и postfix force unwrap.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 2 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 303 tests / 47 suites.
+
+## Шаг 133. Guard против runtime-trap API
+
+**Наблюдение:** после защиты проекта от force operations стоит так же автоматически запрещать crash-only API (`fatalError`, `preconditionFailure`, `assertionFailure`). Для пользовательского приложения такие вызовы ухудшают отказоустойчивость и противоречат курсу на явную обработку ошибок.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `swiftSourcesDoNotUseRuntimeTrapAPIs`;
+- guard сканирует `LayoutSwitcher` и `LayoutSwitcherTests`;
+- перед анализом удаляются комментарии и строковые литералы, чтобы не ловить false positive из документации или self-test fixtures.
+
+**Ожидаемый эффект:** будущие runtime traps будут ловиться regression suite до попадания в приложение.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 3 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 304 tests / 47 suites.
+
+## Шаг 134. Guard против неконтролируемых задержек в тестах
+
+**Наблюдение:** правила проекта требуют детерминированные тесты без `Thread.sleep` и неконтролируемых задержек. Такие вызовы часто приводят к флейкам: локально тест проходит, а на другой машине или под нагрузкой падает.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `testsDoNotUseUncontrolledSleepAPIs`;
+- guard сканирует `LayoutSwitcherTests`;
+- перед анализом удаляются комментарии и строковые литералы, чтобы не ловить false positive из документации или fixtures;
+- запрещены прямые вызовы `Thread.sleep`, `Task.sleep`, `Task<Never, Never>.sleep`, `usleep`, `nanosleep`.
+
+**Ожидаемый эффект:** новые тесты будут использовать injected sleep closures, controlled clocks или `ControlledEvaluationDelay`, а не реальные задержки времени.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 4 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 305 tests / 47 suites.
+
+## Шаг 135. Guard против XCTest API в unit-тестах
+
+**Наблюдение:** правила проекта закрепляют Swift Testing как основной framework для unit-тестов. Если новые тесты начнут использовать `XCTest`, suite станет менее единообразным: появятся разные assertion-style, разные lifecycle-паттерны и больше риска случайно обойти `@MainActor struct` convention.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `unitTestsDoNotUseXCTestAPIs`;
+- guard сканирует только `LayoutSwitcherTests`, не затрагивая отдельный UI-test target;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены `import XCTest`, `XCTAssert*`, `XCTFail`, `XCTUnwrap`.
+
+**Ожидаемый эффект:** новые unit-тесты будут оставаться на Swift Testing (`import Testing`, `@Test`, `#expect`, `#require`), а XCTest не вернется в core test suite случайно.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 5 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 306 tests / 47 suites.
+
+## Шаг 136. Guard против console logging в production-коде
+
+**Наблюдение:** правила проекта требуют использовать `os.Logger` для логирования. Случайные `print`, `debugPrint`, `dump`, `NSLog` или `os_log` в production-коде ухудшают управляемость логов и обходят принятый privacy/logging style.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `appSourcesUseLoggerInsteadOfConsoleLogging`;
+- guard сканирует только production-папку `LayoutSwitcher`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены прямые console/debug logging вызовы: `print`, `Swift.print`, `debugPrint`, `dump`, `NSLog`, `os_log`.
+
+**Ожидаемый эффект:** новые diagnostic-сообщения будут добавляться через `Logger(subsystem:category:)` и сохранят единый стиль логирования проекта.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 6 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 307 tests / 47 suites.
+
+## Шаг 137. Guard против legacy DispatchQueue scheduling
+
+**Наблюдение:** для Swift 6 strict concurrency важно не возвращаться к неструктурированным GCD-переходам в production-коде. `DispatchQueue.main.async` и `DispatchQueue.global` легко обходят actor isolation и усложняют тестирование, особенно там, где уже принят `@MainActor`/injected clock подход.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `appSourcesAvoidLegacyDispatchQueueScheduling`;
+- guard сканирует только production-папку `LayoutSwitcher`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены прямые GCD scheduling-вызовы: `DispatchQueue.main.async`, `DispatchQueue.main.asyncAfter`, `DispatchQueue.global`, `DispatchQueue.global().async`.
+
+**Ожидаемый эффект:** новые асинхронные переходы будут оформляться через main-actor isolation, `Task { @MainActor ... }`, injected clocks или controlled async-delay паттерны, а не через GCD.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 7 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 308 tests / 47 suites.
+
+## Шаг 138. Guard против non-ASCII кода вне строк и комментариев
+
+**Наблюдение:** правила проекта разделяют языки: чат, аудит и документация пишутся на русском, а code identifiers, comments и logs должны оставаться English-only. User-facing текст должен жить в локализации, а не в raw Swift-коде.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `appSourceCodeOutsideStringsAndCommentsIsASCIIOnly`;
+- guard сканирует только production-папку `LayoutSwitcher`;
+- перед анализом удаляются комментарии и строковые литералы;
+- non-ASCII символы запрещены только в оставшемся Swift-коде, поэтому локализация и пользовательские строки не затрагиваются.
+
+**Ожидаемый эффект:** новые идентификаторы, операторы или raw code fragments не будут случайно смешивать языки; пользовательский текст останется в `Localizable.xcstrings`.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 8 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 309 tests / 47 suites.
+
+## Шаг 139. Guard против ObservableObject API в production-коде
+
+**Наблюдение:** проект уже использует современный Observation-подход (`@Observable`, `@Bindable`) вместо `ObservableObject`/`@Published`. Важно не смешивать два поколения state-management API, иначе UI-модели начнут расходиться по стилю, lifecycle и тестируемости.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `appSourcesUseObservationInsteadOfObservableObject`;
+- guard сканирует только production-папку `LayoutSwitcher`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены `ObservableObject`, `@ObservedObject`, `@StateObject`, `@EnvironmentObject`, `@Published`, `objectWillChange`.
+
+**Ожидаемый эффект:** новые UI-bound модели останутся на `@Observable`, а SwiftUI views будут продолжать использовать современный binding/state pattern без возврата к Combine-era API.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 9 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 310 tests / 47 suites.
+
+## Шаг 140. Self-test для sanitizer safety-suite
+
+**Наблюдение:** большинство новых quality-guards сначала удаляют комментарии и строковые литералы, чтобы не ловить false positive из документации, fixtures и локализуемых строк. Значит сам sanitizer стал частью критичной тестовой инфраструктуры.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `sanitizerRemovesCommentsAndStringLiteralsBeforeRuleScanning`;
+- fixture содержит запрещенные tokens внутри comments/string literals;
+- тест проверяет, что runtime-trap, console logging, uncontrolled sleep, legacy DispatchQueue и ObservableObject guards не срабатывают на очищенном source.
+
+**Ожидаемый эффект:** если логика sanitizer будет случайно сломана, targeted safety-suite покажет проблему сразу, до появления шумных false positive в остальных guards.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 10 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 311 tests / 47 suites.
+
+## Шаг 141. Positive self-test для rule scanners
+
+**Наблюдение:** safety-suite должен защищать не только от false positive, но и от false negative. Если helper-сканер случайно перестанет находить запрещенный token, основной guard может оставаться зеленым, но уже не будет выполнять свою функцию.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `scannersFindForbiddenTokensInCode`;
+- тест напрямую подает запрещенные tokens в scanners для runtime traps, console logging, uncontrolled sleep, legacy DispatchQueue, XCTest API, ObservableObject API и non-ASCII code;
+- проверяется, что каждый scanner возвращает хотя бы одно нарушение на явно плохом source.
+
+**Ожидаемый эффект:** изменения в helper-логике будут ловиться с двух сторон: sanitizer защищен от ложных срабатываний, а scanners теперь защищены от ложных пропусков.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 11 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 312 tests / 47 suites.
+
+## Шаг 142. Guard против `import Combine` в production-коде
+
+**Наблюдение:** проект уже закрепил современный Observation-подход и Swift 6 concurrency guards. Даже если `ObservableObject`/`@Published` запрещены отдельно, случайный `import Combine` в production-коде может стать ранним признаком возврата к Combine-era паттернам.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `appSourcesDoNotImportCombine`;
+- guard сканирует только production-папку `LayoutSwitcher`;
+- перед анализом удаляются комментарии и строковые литералы;
+- `import Combine` добавлен в sanitizer self-test и positive scanner self-test.
+
+**Ожидаемый эффект:** новые production-файлы будут оставаться на Observation/structured concurrency без случайного подключения Combine.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 12 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 313 tests / 47 suites.
+
+## Шаг 143. Guard против test framework imports в production-коде
+
+**Наблюдение:** production target не должен зависеть от тестовых framework-ов. Даже случайный `import Testing` или `import XCTest` в app source нарушает границу target-ов и может маскировать тестовую инфраструктуру внутри приложения.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `appSourcesDoNotImportTestFrameworks`;
+- guard сканирует только production-папку `LayoutSwitcher`;
+- перед анализом удаляются комментарии и строковые литералы;
+- `import Testing` и `import XCTest` добавлены в sanitizer self-test и positive scanner self-test.
+
+**Ожидаемый эффект:** тестовые зависимости останутся в `LayoutSwitcherTests`/UI-test target, а production Swift-код сохранит чистую dependency boundary.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 13 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 314 tests / 47 suites.
+
+## Шаг 144. Guard против wall-clock API в unit-тестах
+
+**Наблюдение:** детерминированные тесты не должны зависеть от текущего времени. Прямые `Date()`, `Date.now` и `Calendar.current` делают проверки чувствительными к моменту запуска, timezone/day rollover и CI-нагрузке.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `unitTestsDoNotUseWallClockAPIs`;
+- guard сканирует `LayoutSwitcherTests`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены прямые `Date()`, `Date.now`, `Calendar.current`;
+- wall-clock scanner добавлен в sanitizer self-test и positive scanner self-test;
+- `KeyboardEventTap` оставлен как единственное audited exception, потому что CGEvent callback должен принимать hotkey-consume решение синхронно.
+
+**Ожидаемый эффект:** новые unit-тесты будут использовать fixed dates, injected clocks/calendar providers или controlled test fixtures вместо реального времени.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 14 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 315 tests / 47 suites.
+
+## Шаг 145. Guard против random API в unit-тестах
+
+**Наблюдение:** unit-тесты должны быть полностью воспроизводимыми. Прямые `UUID()` и `.random(...)` создают скрытую случайность: тест может проходить локально, но стать нестабильным в CI или при параллельных запусках.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `unitTestsDoNotUseRandomAPIs`;
+- guard сканирует `LayoutSwitcherTests`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены прямые `UUID()`, `UUID().uuidString` и `.random(...)`;
+- random scanner добавлен в sanitizer self-test и positive scanner self-test;
+- `RecentSwitchesTests.makeDefaults` больше не использует `UUID().uuidString`, а строит suite name от текущего test-функции и очищает persistent domain.
+
+**Ожидаемый эффект:** новые unit-тесты будут использовать фиксированные значения или injected ID/value factories вместо случайных данных.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 15 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 316 tests / 47 suites.
+
+## Шаг 146. Guard против `@unchecked Sendable`
+
+**Наблюдение:** `@unchecked Sendable` отключает часть гарантий Swift 6 strict concurrency и переносит ответственность за потокобезопасность на разработчика. Такой обход допустим только после отдельного аудита, но не должен появляться случайно.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `swiftSourcesDoNotUseUncheckedSendable`;
+- guard сканирует `LayoutSwitcher` и `LayoutSwitcherTests`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещено прямое использование `@unchecked Sendable`;
+- scanner добавлен в sanitizer self-test и positive scanner self-test.
+
+**Ожидаемый эффект:** новые обходы Swift concurrency safety будут блокироваться тестами до попадания в проект.
+
+**Статус:** verified. Targeted DictionaryTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 29 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 323 tests / 47 suites.
+
+## Шаг 153. Явная actor-isolation для unstructured `Task`
+
+**Наблюдение:** аудит Swift concurrency показал, что почти все unstructured `Task` в app-коде уже явно указывают `@MainActor`, но экспорт логов из `SettingsView` запускался через голый `Task { ... }`. Для Swift 6 такой код менее очевиден: он может полагаться на inherited actor context и усложняет будущий аудит UI-side effects.
+
+**Изменения:**
+- `SettingsView.exportLogs()` теперь запускает export closure как `Task { @MainActor in ... }`;
+- `SwiftSafetyRulesTests` получил guard `appSourcesUseExplicitActorOnUnstructuredTasks`;
+- scanner разрешает `Task.detached` и actor-annotated tasks, но запрещает `Task { ... }` / `Task(priority:) { ... }` без явного actor в app sources;
+- sanitizer fixture дополнен комментарием с `Task { ... }`, чтобы правило не срабатывало на comments/strings.
+
+**Ожидаемый эффект:** unstructured tasks в production-коде становятся audit-friendly: actor boundary виден прямо в месте запуска, а новые неявные `Task` будут пойманы тестом.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 23 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 324 tests / 47 suites.
+
+## Шаг 154. Value semantics для `PresentationModeDetector`
+
+**Наблюдение:** `PresentationModeDetector` не хранит изменяемое состояние, не требует identity и работает как небольшой вычислительный сервис поверх injected `frontmostBundleIDProvider` и immutable set bundle identifiers. Объявление `final class` противоречило правилу проекта `prefer struct by default`.
+
+**Изменения:**
+- `PresentationModeDetector` переведен с `final class` на `struct`;
+- публичный контракт и DI initializer сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepPresentationModeDetectorValueTyped`;
+- scanner запрещает возврат `class PresentationModeDetector` / `final class PresentationModeDetector` после удаления comments/strings.
+
+**Ожидаемый эффект:** presentation-mode detection остается детерминированным и тестируемым, но больше не несет лишнюю reference semantics. Новые изменения не смогут случайно вернуть detector к reference type без падения safety-suite.
+
+**Статус:** verified. Targeted PresentationModeDetectorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 29 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 325 tests / 47 suites.
+
+## Шаг 155. Value semantics для `LearningCache`
+
+**Наблюдение:** `LearningCache` работал как wrapper вокруг injected `UserDefaults`, clock и ID factory. Собственного mutable identity у типа нет: записи читаются и пишутся через computed persistence property, а все side effects уже проходят через initializer dependencies. Поэтому `final class` был лишней reference semantics.
+
+**Изменения:**
+- `LearningCache` переведен с `final class` на `struct`;
+- публичные методы и initializer сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepLearningCacheValueTyped`;
+- scanner запрещает возврат `class LearningCache` / `final class LearningCache` после удаления comments/strings.
+
+**Ожидаемый эффект:** learning cache остается детерминированным persistence adapter, но лучше соответствует правилу проекта `prefer struct by default`. Случайный возврат к reference type будет пойман safety-suite.
+
+**Статус:** verified. Targeted LearningCacheTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 34 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 326 tests / 47 suites.
+
+## Шаг 156. Подключение `detectionSensitivity` к runtime detection
+
+**Наблюдение:** настройка чувствительности детектора сохранялась в `AppState` и была доступна в UI, но runtime-вызовы `LayoutDetector.decide(...)` не передавали соответствующие `DetectionThresholds`. В результате выбор Conservative/Balanced/Aggressive мог не менять фактическое поведение автопереключения.
+
+**Изменения:**
+- `LayoutDetector.decide(...)` получил optional `thresholds` override с сохранением прежнего default behavior;
+- `TypingPipeline` передает `appState.detectionSensitivity.thresholds` в auto-switch и auto-extend decisions;
+- `ManualActionsCoordinator` передает те же thresholds в manual retype и sentence conversion decisions;
+- `LayoutDetectorTests` получил регрессионный тест, где aggressive thresholds меняют n-gram fallback decision;
+- `SwiftSafetyRulesTests` получил guard `appSourcesPassSensitivityThresholdsToDetectorDecisions`, запрещающий production-вызовы `detector.decide(...)` без `thresholds:`.
+
+**Ожидаемый эффект:** пользовательская настройка чувствительности становится реально рабочей в auto и manual detection paths; новые вызовы detector-а не смогут обойти sensitivity без падения safety-suite.
+
+**Статус:** verified. Targeted LayoutDetectorTests + SwiftSafetyRulesTests + TypingPipelineTests: `** TEST SUCCEEDED **`, 76 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 328 tests / 47 suites.
+
+## Шаг 157. Value semantics для `LayoutDetector`
+
+**Наблюдение:** после подключения `detectionSensitivity` через explicit `thresholds` override сам `LayoutDetector` больше не требует mutable property или reference identity. Алгоритм `decide(...)` является вычислительным сервисом: он получает buffer, active language, feature flags и thresholds, затем возвращает доменное решение без side effects.
+
+**Изменения:**
+- `LayoutDetector` переведен с `final class` на `struct`;
+- stored `thresholds` стал immutable `let`;
+- публичный initializer и factories `defaultMultilingual(...)` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepLayoutDetectorValueTyped`;
+- scanner запрещает возврат `class LayoutDetector` / `final class LayoutDetector` после удаления comments/strings.
+
+**Ожидаемый эффект:** detector соответствует правилу проекта `prefer struct by default`, а sensitivity thresholds остаются явной immutable частью конфигурации. Случайный возврат к reference type будет пойман safety-suite.
+
+**Статус:** verified. Targeted LayoutDetectorTests + SwiftSafetyRulesTests + TypingPipelineTests: `** TEST SUCCEEDED **`, 77 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 329 tests / 47 suites.
+
+## Шаг 158. Value semantics для `CompositeDictionary`
+
+**Наблюдение:** `CompositeDictionary` не владеет mutable state и не требует identity: он хранит immutable `language` и immutable список `parts`, а затем делегирует `contains(_:)` и `size` underlying dictionaries. Reference semantics здесь были лишними, особенно после перевода dictionary-related services к value semantics.
+
+**Изменения:**
+- `CompositeDictionary` переведен с `final class` на `struct`;
+- initializer и `WordDictionary` conformance сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepCompositeDictionaryValueTyped`;
+- scanner запрещает возврат `class CompositeDictionary` / `final class CompositeDictionary` после удаления comments/strings.
+
+**Ожидаемый эффект:** composition layer для словарей больше не создает лишнюю reference identity; future regressions будут ловиться safety-suite.
+
+**Статус:** verified. Targeted DictionaryTests + LayoutDetectorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 61 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 330 tests / 47 suites.
+
+## Шаг 159. Value semantics для `LaunchAtLoginManager`
+
+**Наблюдение:** `LaunchAtLoginManager` не хранит mutable state и не требует object identity. Он является thin service wrapper над injected `SMAppService` side-effect closures: `statusProvider`, `registerService`, `unregisterService`. Такое поведение лучше выражается value semantics.
+
+**Изменения:**
+- `LaunchAtLoginManager` переведен с `final class` на `struct`;
+- initializer, `isEnabled` и `setEnabled(_:)` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepLaunchAtLoginManagerValueTyped`;
+- scanner запрещает возврат `class LaunchAtLoginManager` / `final class LaunchAtLoginManager` после удаления comments/strings.
+
+**Ожидаемый эффект:** launch-at-login wiring остается полностью инъектируемым и тестируемым, но больше не создает лишнюю reference identity.
+
+**Статус:** verified. Targeted LaunchAtLoginManagerTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 38 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 331 tests / 47 suites.
+
+## Шаг 160. Value semantics для `SmartPaste`
+
+**Наблюдение:** `SmartPaste` не владеет mutable state и не требует object identity. Сервис хранит injected dependencies (`InputSourceManaging`, clipboard reader, key-event poster, sleep closure), вычисляет язык clipboard и выполняет side effects через эти зависимости.
+
+**Изменения:**
+- `SmartPaste` переведен с `final class` на `struct`;
+- production initializer, test initializer и `paste()` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepSmartPasteValueTyped`;
+- scanner запрещает возврат `class SmartPaste` / `final class SmartPaste` после удаления comments/strings.
+
+**Ожидаемый эффект:** smart-paste helper остается полностью инъектируемым service value, без лишней reference identity.
+
+**Статус:** verified. Targeted SmartPasteTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 38 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 332 tests / 47 suites.
+
+## Шаг 158. Value semantics для `CompositeDictionary`
+
+**Наблюдение:** `CompositeDictionary` не владеет mutable state и не требует identity: он хранит immutable `language` и immutable список `parts`, а затем делегирует `contains(_:)` и `size` underlying dictionaries. Reference semantics здесь были лишними, особенно после перевода dictionary-related services к value semantics.
+
+**Изменения:**
+- `CompositeDictionary` переведен с `final class` на `struct`;
+- initializer и `WordDictionary` conformance сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepCompositeDictionaryValueTyped`;
+- scanner запрещает возврат `class CompositeDictionary` / `final class CompositeDictionary` после удаления comments/strings.
+
+**Ожидаемый эффект:** composition layer для словарей больше не создает лишнюю reference identity; future regressions будут ловиться safety-suite.
+
+**Статус:** verified. Targeted DictionaryTests + LayoutDetectorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 61 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 330 tests / 47 suites.
+
+## Шаг 159. Value semantics для `LaunchAtLoginManager`
+
+**Наблюдение:** `LaunchAtLoginManager` не хранит mutable state и не требует object identity. Он является thin service wrapper над injected `SMAppService` side-effect closures: `statusProvider`, `registerService`, `unregisterService`. Такое поведение лучше выражается value semantics.
+
+**Изменения:**
+- `LaunchAtLoginManager` переведен с `final class` на `struct`;
+- initializer, `isEnabled` и `setEnabled(_:)` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepLaunchAtLoginManagerValueTyped`;
+- scanner запрещает возврат `class LaunchAtLoginManager` / `final class LaunchAtLoginManager` после удаления comments/strings.
+
+**Ожидаемый эффект:** launch-at-login wiring остается полностью инъектируемым и тестируемым, но больше не создает лишнюю reference identity.
+
+**Статус:** verified. Targeted LaunchAtLoginManagerTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 38 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 331 tests / 47 suites.
+
+## Шаг 147. Guard против unaudited actor isolation bypasses
+
+**Наблюдение:** `MainActor.assumeIsolated` и `nonisolated(unsafe)` обходят нормальные гарантии Swift 6 strict concurrency. Такие инструменты допустимы только как редкое исключение после отдельного аудита; поэтому guard запрещает новые неаудированные использования и оставляет единственное документированное исключение для синхронного CGEvent callback.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `swiftSourcesDoNotUseUnauditedUnsafeIsolationBypasses`;
+- guard сканирует `LayoutSwitcher` и `LayoutSwitcherTests`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены новые неаудированные `MainActor.assumeIsolated` и `nonisolated(unsafe)`;
+- scanner добавлен в sanitizer self-test и positive scanner self-test.
+
+**Ожидаемый эффект:** новые неаудированные обходы actor isolation будут блокироваться тестами до попадания в проект.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 17 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 318 tests / 47 suites.
+
+## Шаг 148. Guard против singleton-style `shared` state
+
+**Наблюдение:** проектный стандарт требует dependency injection вместо собственных singleton/global access points. Определения вида `static let shared` и `static var shared` создают скрытую глобальную зависимость и усложняют тестирование.
+
+**Изменения:**
+- `SwiftSafetyRulesTests` получил тест `swiftSourcesDoNotDefineSingletonSharedState`;
+- guard сканирует `LayoutSwitcher` и `LayoutSwitcherTests`;
+- перед анализом удаляются комментарии и строковые литералы;
+- запрещены определения `static let shared` и `static var shared`;
+- scanner добавлен в sanitizer self-test и positive scanner self-test.
+
+**Ожидаемый эффект:** новые сервисы и shared-state объекты будут проектироваться через initializer injection/default closures, а не через singleton-доступ.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 18 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 319 tests / 47 suites.
+
+## Шаг 149. Guard против stored `static var` mutable state
+
+**Наблюдение:** после запрета singleton-style `shared` в коде оставался более широкий риск: stored `static var` может становиться скрытым mutable global state даже без имени `shared`. Поиск показал, что вычисляемые `static var` используются безопасно, а единственный stored mutable cache находился в help loader.
+
+**Изменения:**
+- `BundledHelpLoader` больше не хранит mutable `static var` loader;
+- production help cache заменен на лениво создаваемый immutable snapshot `static let bodiesByLanguage`;
+- `HelpBodyLoader` получил явный `bodies(for:)` для повторного использования загрузки/парсинга;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesDoNotDefineStoredStaticMutableState`;
+- scanner игнорирует вычисляемые `static var`, но запрещает stored `static var ... = ...` после удаления комментариев и строковых литералов.
+
+**Ожидаемый эффект:** новые mutable global caches и скрытая статическая изменяемость будут останавливаться тестами, а допустимые вычисляемые свойства останутся разрешенными.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 19 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 320 tests / 47 suites.
+
+## Шаг 150. Guard против static `DateFormatter` reference state
+
+**Наблюдение:** аудит `static let` показал, что большинство таких объявлений являются безопасными constants (`Logger`, keys, sets, callbacks). Реальный риск найден в `HistoryTab`: `DateFormatter` является mutable reference type, поэтому `static let DateFormatter` создает общую изменяемую ссылку, даже если само свойство объявлено через `let`.
+
+**Изменения:**
+- `HistoryTab.exportPayload` теперь принимает `timestampStringProvider` вместо `DateFormatter`;
+- on-screen и export timestamps форматируются без shared static formatter state;
+- `HistoryTabTests` используют deterministic closure вместо `DateFormatter` fixture;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesDoNotDefineStaticDateFormatters`;
+- scanner запрещает `static let/var` `DateFormatter` после удаления комментариев и строковых литералов.
+
+**Ожидаемый эффект:** в проект не вернутся статические `DateFormatter` instances как скрытое shared mutable reference state; форматирование останется инъектируемым и тестируемым.
+
+**Статус:** verified. Targeted HistoryTabTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 22 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 321 tests / 47 suites.
+
+## Шаг 151. Guard против static `live` service instances
+
+**Наблюдение:** аудит `static let` показал два service-like объявления `static let live` в feedback-компонентах. Даже если сами типы value-like, такая форма создает shared production instance и выглядит как скрытый singleton access point. Для DI-контракта безопаснее использовать factory method и передавать созданную зависимость через initializer.
+
+**Изменения:**
+- `SoundFeedbackPlayer.live` заменен на `SoundFeedbackPlayer.live()` factory method;
+- `VisualFeedbackPlayer.live` заменен на `VisualFeedbackPlayer.live()` factory method;
+- `VisualFeedbackPlayerTests` обновлен на вызов factory method;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesDoNotDefineStaticLiveInstances`;
+- scanner запрещает `static let live` после удаления комментариев и строковых литералов.
+
+**Ожидаемый эффект:** production-ready dependencies остаются удобными для wiring, но не хранятся как shared static instances; новые `static let live` будут остановлены тестами.
+
+**Статус:** verified. Targeted SoundFeedbackPlayerTests + VisualFeedbackPlayerTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 27 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 322 tests / 47 suites.
+
+## Шаг 152. Value semantics для `InMemoryDictionary`
+
+**Наблюдение:** аудит dictionary caches показал, что `EmbeddedDictionaries` и `BundledDictionaryLoader` держат `InMemoryDictionary` в `static let` caches. Сам `InMemoryDictionary` был immutable, но объявлен как `final class`, поэтому caches фактически разделяли reference object. Для словаря без identity это лишняя reference semantics и потенциальный скрытый shared-state риск.
+
+**Изменения:**
+- `InMemoryDictionary` переведен с `final class` на `struct`;
+- тесты словарных caches больше не проверяют identity через `===`;
+- `DictionaryTests` теперь проверяют stable value behavior: размеры и lookup-результаты;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepInMemoryDictionaryValueTyped`;
+- scanner запрещает возврат `class InMemoryDictionary` / `final class InMemoryDictionary` после удаления комментариев и строковых литералов.
+
+**Ожидаемый эффект:** словарные static caches остаются быстрыми и стабильными, но больше не закрепляют shared reference object; `InMemoryDictionary` соответствует value-semantics правилу проекта.
+
+**Статус:** verified. Targeted DictionaryTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 323 tests / 47 suites.
+
+## Шаг 153. Actor isolation для `SettingsView.exportLogs`
+
+**Наблюдение:** `SettingsView.exportLogs` запускал unstructured `Task` без явной actor-аннотации. Для Swift 6 strict concurrency это риск: UI-flow должен оставаться явно привязанным к `MainActor`, особенно когда closure трогает presentation state и вызывает AppKit save panel.
+
+**Изменения:**
+- `SettingsView.exportLogs` переведен на `Task { @MainActor in ... }`;
+- сохранен существующий user-facing flow экспорта diagnostics logs;
+- `SwiftSafetyRulesTests` получил guard против unstructured `Task { ... }` без явного actor context;
+- sanitizer и positive scanner self-tests покрывают новый запрет.
+
+**Ожидаемый эффект:** новые unstructured tasks в app sources должны явно выбирать actor context, а UI-bound операции не будут случайно уходить в неочевидный executor.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 324 tests / 47 suites.
+
+## Шаг 154. Value semantics для `PresentationModeDetector`
+
+**Наблюдение:** `PresentationModeDetector` выполняет чистую проверку bundle ID against injected/configured set и не требует identity. Reference semantics здесь были избыточны и расходились с правилом проекта `prefer struct by default`.
+
+**Изменения:**
+- `PresentationModeDetector` переведен с `final class` на `struct`;
+- публичный API и поведение определения presentation apps сохранены;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepPresentationModeDetectorValueTyped`;
+- scanner запрещает возврат `class PresentationModeDetector` / `final class PresentationModeDetector` после удаления comments/strings.
+
+**Ожидаемый эффект:** detector остается value-typed utility без скрытой shared identity, а случайный откат к class будет пойман safety-suite.
+
+**Статус:** verified. Targeted PresentationModeDetectorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 325 tests / 47 suites.
+
+## Шаг 155. Value semantics для `LearningCache`
+
+**Наблюдение:** `LearningCache` хранит injected persistence closures и предоставляет cache-like API, но не нуждается в reference identity. Единственная mutation-точка была совместима с value semantics через `nonmutating set`, потому что фактический side effect делегируется injected closure.
+
+**Изменения:**
+- `LearningCache` переведен с `final class` на `struct`;
+- setter сохранен как `nonmutating set`;
+- тесты существующего cache behavior сохранены;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepLearningCacheValueTyped`;
+- scanner запрещает возврат `class LearningCache` / `final class LearningCache` после удаления comments/strings.
+
+**Ожидаемый эффект:** learning cache остается инъектируемым value service, без лишней object identity и без риска тихого возврата к reference semantics.
+
+**Статус:** verified. Targeted LearningCacheTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 326 tests / 47 suites.
+
+## Шаг 156. Реальное подключение `detectionSensitivity`
+
+**Наблюдение:** настройка `detectionSensitivity` сохранялась в `AppState`, но detector decisions использовали только thresholds, зафиксированные внутри `LayoutDetector`. Это делало UI-настройку чувствительности неполной: пользователь менял режим, но часть detection path продолжала работать по default thresholds.
+
+**Изменения:**
+- `LayoutDetector.decide(...)` получил явный optional override `thresholds thresholdOverride: DetectionThresholds? = nil`;
+- внутри detector используется локальный `activeThresholds`, который влияет на min/max length, strict min, NaturalLanguage thresholds, active-dictionary override margin и n-gram margin;
+- `TypingPipeline` передает `appState?.detectionSensitivity.thresholds ?? detector.thresholds` в auto-switch и auto-extend decisions;
+- `ManualActionsCoordinator` передает те же effective thresholds в manual retype и sentence conversion;
+- `LayoutDetectorTests` получил regression test `thresholdsOverrideChangesNGramFallbackDecision`;
+- `SwiftSafetyRulesTests` получил guard `appSourcesPassSensitivityThresholdsToDetectorDecisions`.
+
+**Ожидаемый эффект:** режимы sensitivity теперь действительно меняют решение detector во всех production decision paths, а новый guard не даст вернуть вызовы `detector.decide(...)` без effective thresholds.
+
+**Статус:** verified. Targeted LayoutDetectorTests + SwiftSafetyRulesTests + TypingPipelineTests: `** TEST SUCCEEDED **`, 76 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 328 tests / 47 suites.
+
+## Шаг 157. Value semantics для `LayoutDetector`
+
+**Наблюдение:** после подключения `detectionSensitivity` через explicit `thresholds` override сам `LayoutDetector` больше не требует mutable property или reference identity. Алгоритм `decide(...)` является вычислительным сервисом: он получает buffer, active language, feature flags и thresholds, затем возвращает доменное решение без side effects.
+
+**Изменения:**
+- `LayoutDetector` переведен с `final class` на `struct`;
+- stored `thresholds` стал immutable `let`;
+- публичный initializer и factories `defaultMultilingual(...)` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepLayoutDetectorValueTyped`;
+- scanner запрещает возврат `class LayoutDetector` / `final class LayoutDetector` после удаления comments/strings.
+
+**Ожидаемый эффект:** detector соответствует правилу проекта `prefer struct by default`, а sensitivity thresholds остаются явной immutable частью конфигурации. Случайный возврат к reference type будет пойман safety-suite.
+
+**Статус:** verified. Targeted LayoutDetectorTests + SwiftSafetyRulesTests + TypingPipelineTests: `** TEST SUCCEEDED **`, 77 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 329 tests / 47 suites.
+
+## Шаг 158. Value semantics для `CompositeDictionary`
+
+**Наблюдение:** `CompositeDictionary` не владеет mutable state и не требует identity: он хранит immutable `language` и immutable список `parts`, а затем делегирует `contains(_:)` и `size` underlying dictionaries. Reference semantics здесь были лишними, особенно после перевода dictionary-related services к value semantics.
+
+**Изменения:**
+- `CompositeDictionary` переведен с `final class` на `struct`;
+- initializer и `WordDictionary` conformance сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepCompositeDictionaryValueTyped`;
+- scanner запрещает возврат `class CompositeDictionary` / `final class CompositeDictionary` после удаления comments/strings.
+
+**Ожидаемый эффект:** composition layer для словарей больше не создает лишнюю reference identity; future regressions будут ловиться safety-suite.
+
+**Статус:** verified. Targeted DictionaryTests + LayoutDetectorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 61 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 330 tests / 47 suites.
+
+## Шаг 159. Value semantics для `LaunchAtLoginManager`
+
+**Наблюдение:** `LaunchAtLoginManager` не хранит mutable state и не требует object identity. Он является thin service wrapper над injected `SMAppService` side-effect closures: `statusProvider`, `registerService`, `unregisterService`. Такое поведение лучше выражается value semantics.
+
+**Изменения:**
+- `LaunchAtLoginManager` переведен с `final class` на `struct`;
+- initializer, `isEnabled` и `setEnabled(_:)` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepLaunchAtLoginManagerValueTyped`;
+- scanner запрещает возврат `class LaunchAtLoginManager` / `final class LaunchAtLoginManager` после удаления comments/strings.
+
+**Ожидаемый эффект:** launch-at-login wiring остается полностью инъектируемым и тестируемым, но больше не создает лишнюю reference identity.
+
+**Статус:** verified. Targeted LaunchAtLoginManagerTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 38 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 331 tests / 47 suites.
+
+## Шаг 160. Value semantics для `SmartPaste`
+
+**Наблюдение:** `SmartPaste` не владеет mutable state и не требует object identity. Сервис хранит injected dependencies (`InputSourceManaging`, clipboard reader, key-event poster, sleep closure), вычисляет язык clipboard и выполняет side effects через эти зависимости.
+
+**Изменения:**
+- `SmartPaste` переведен с `final class` на `struct`;
+- production initializer, test initializer и `paste()` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepSmartPasteValueTyped`;
+- scanner запрещает возврат `class SmartPaste` / `final class SmartPaste` после удаления comments/strings.
+
+**Ожидаемый эффект:** smart-paste helper остается полностью инъектируемым service value, без лишней reference identity.
+
+**Статус:** verified. Targeted SmartPasteTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 38 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 332 tests / 47 suites.
+
+## Шаг 161. Value semantics для `SelectionConverter`
+
+**Наблюдение:** `SelectionConverter` не владеет mutable state и не требует object identity. Сервис хранит injected dependencies (`TextConverter`, focused element provider, pasteboard read/write closures, key-event poster, sleep closure) и выполняет conversion side effects только через эти зависимости.
+
+**Изменения:**
+- `SelectionConverter` переведен с `final class` на `struct`;
+- production initializer, test initializer и `convertSelection()` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepSelectionConverterValueTyped`;
+- scanner запрещает возврат `class SelectionConverter` / `final class SelectionConverter` после удаления comments/strings.
+
+**Ожидаемый эффект:** selection-conversion helper остается fully injectable value service без лишней reference identity.
+
+**Статус:** verified. Targeted SelectionConverterTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 36 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 333 tests / 47 suites.
+
+## Шаг 162. Value semantics для `Retyper`
+
+**Наблюдение:** `Retyper` не владеет собственным mutable state и не требует object identity. Он является orchestration service: получает injected dependencies (`KeyboardMapping`, layout providers/selectors, sleep, key-event posters) и делегирует единственный stateful lifecycle `CapsLockGuard`, который остается отдельным identity-объектом для пары capture/restore.
+
+**Изменения:**
+- `Retyper` переведен с `final class` на `struct`;
+- DI initializer, `retype(...)`, `retypeResult(...)` и `retypeSequenceResult(...)` сохранены без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `swiftSourcesKeepRetyperValueTyped`;
+- scanner запрещает возврат `class Retyper` / `final class Retyper` после удаления comments/strings.
+
+**Ожидаемый эффект:** retype orchestration теперь соответствует правилу `prefer struct by default`, а mutable identity остается только там, где она действительно нужна: в `CapsLockGuard`, `RetypeDispatcher`, event/observer lifecycle objects.
+
+**Статус:** verified. Targeted RetyperTests + TypingPipelineTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 63 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 334 tests / 47 suites.
+
+## Шаг 163. Safety guard для `final class` boundary
+
+**Наблюдение:** после серии переводов сервисов на value semantics оставшиеся `class` в app sources в основном являются lifecycle/UI/state objects: `@Observable` models, `NSObject` delegates/controllers, event taps, observers, dispatchers и объекты с mutable identity. Для такого слоя важно запретить случайное появление обычных наследуемых `class`, потому что проектное правило требует `struct` по умолчанию и `final class` только при необходимости identity.
+
+**Изменения:**
+- добавлен safety-test `appSourcesKeepReferenceTypesFinal`;
+- scanner проходит app sources после удаления comments/strings и ищет `class ...` без `final`;
+- sanitizer fixture расширен примером `class NonFinalReferenceType` внутри comment block;
+- positive scanner check подтверждает, что `class MutableReference {}` ловится, а `final class StableReference {}` допускается.
+
+**Ожидаемый эффект:** новые reference types больше не смогут появиться в application layer как наследуемые классы по умолчанию. Если identity нужна, разработчик явно пишет `final class`; если не нужна — выбирает `struct`.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 33 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 335 tests / 47 suites.
+
+## Шаг 164. Safety guard для `[weak self]` в `Task` closures
+
+**Наблюдение:** проектное правило требует захватывать `[weak self]` в closure, где используется `self`. Самый рискованный практический случай в текущей архитектуре — unstructured `Task { @MainActor ... }`, потому что такие closures могут пережить вызывающий объект и удержать lifecycle/state owner дольше ожидаемого.
+
+**Изменения:**
+- добавлен safety-test `appSourcesCaptureSelfWeaklyInTasks`;
+- scanner проходит app sources после удаления comments/strings;
+- для каждого `Task { ... }` / `Task(priority:) { ... }` собирается весь closure block, а не только первая строка;
+- если block содержит `self.` или `self?`, но не содержит capture-list с `weak self`, тест падает;
+- sanitizer fixture и positive scanner checks расширены примерами unsafe/safe Task captures.
+
+**Ожидаемый эффект:** новые async paths не смогут случайно удерживать owner через strong `self` внутри `Task`. Для owner-bound work остается явный паттерн `Task { @MainActor [weak self] in ... }`; для closures без `self` правило не шумит.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 34 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 336 tests / 47 suites.
+
+## Шаг 165. Safety guard для `Logger` interpolation privacy
+
+**Наблюдение:** проектное правило требует использовать `os.Logger` и явно аннотировать пользовательские данные через `privacy: .public`, чтобы логи оставались читаемыми в Console и не превращались в `<private>`. Сейчас production-код уже придерживается этого паттерна, но без safety guard новый interpolation внутри `Self.logger.*(...)` мог появиться без privacy annotation.
+
+**Изменения:**
+- добавлен safety-test `appSourcesDeclareLoggerInterpolationPrivacy`;
+- scanner проходит app sources и ищет `logger.` calls с Swift string interpolation `\\(...)`;
+- каждый interpolation body проверяется на наличие `privacy:`;
+- scanner умеет корректно разобрать вложенные parentheses внутри выражения, например `String(describing: value), privacy: .public`;
+- positive scanner checks добавлены для unsafe interpolation, обычного `privacy: .public` и вложенного `String(describing:)`.
+
+**Ожидаемый эффект:** новые логи с interpolated значениями не смогут попасть в код без явной privacy annotation. Это закрепляет текущий privacy-first logging стиль проекта автоматическим тестом.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 35 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 337 tests / 47 suites.
+
+## Шаг 166. Safety guard против `TODO` / `FIXME` в app sources
+
+**Наблюдение:** в текущем app layer не найдено открытых `TODO` / `FIXME` markers. Для проекта полезнее хранить технический долг в audit-документе с номером шага, контекстом и статусом, чем оставлять короткие комментарии в коде без владельца и критерия завершения.
+
+**Изменения:**
+- добавлен safety-test `appSourcesDoNotLeaveTodoMarkers`;
+- scanner проходит Swift-файлы application layer и ищет standalone markers `TODO` / `FIXME`;
+- positive scanner checks подтверждают, что оба маркера ловятся;
+- нейтральный текст про tracking долга в `Swift6CodeQualityAudit.md` не считается нарушением.
+
+**Ожидаемый эффект:** новые временные комментарии не будут незаметно оседать в production-коде. Если появляется долг, он должен быть либо сразу закрыт, либо явно описан в аудите как отдельный шаг.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 36 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 338 tests / 47 suites.
+
+## Шаг 167. Safety guard для `Logger` subsystem/category
+
+**Наблюдение:** все текущие `Logger(subsystem:category:)` declarations в application layer используют единый subsystem `GIH.LayoutSwitcher`, а category names оформлены в PascalCase. Это соответствует правилам проекта и облегчает фильтрацию логов в Console по subsystem/category.
+
+**Изменения:**
+- добавлен safety-test `appSourcesUseConsistentLoggerSubsystemAndCategories`;
+- scanner проходит Swift-файлы application layer и ищет `Logger(subsystem: "...", category: "...")` declarations;
+- subsystem обязан быть ровно `GIH.LayoutSwitcher`;
+- category обязана соответствовать PascalCase pattern;
+- positive scanner checks добавлены для неверного subsystem, неверного lowercase category и корректного объявления.
+
+**Ожидаемый эффект:** новые logger declarations не смогут случайно использовать другой subsystem или неструктурированное имя категории. Логи останутся единообразными и удобными для диагностики.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 37 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 339 tests / 47 suites.
+
+## Шаг 168. Safety guard для dot-namespaced `UserDefaults` keys
+
+**Наблюдение:** правила проекта требуют dot-namespaced `UserDefaults` keys, например `settings.autoAddRomanianDiacritics` или `stats.autoTotal`. Текущий код в основном использует constants вида `Self.*Key`, что хорошо для сопровождения, но без safety guard новый direct literal `forKey: "enabled"` или новый `defaultsKey = "enabled"` мог попасть в код незаметно.
+
+**Изменения:**
+- добавлен safety-test `appSourcesUseNamespacedUserDefaultsKeys`;
+- scanner проверяет direct string literals в `forKey: "..."`;
+- scanner проверяет static key constants, которые выглядят как `UserDefaults` keys;
+- `legacyDefaultsKey` оставлен явным migration exception, чтобы не ломать чтение старых настроек;
+- payload/environment keys исключены из правила, потому что они не являются ключами `UserDefaults`;
+- positive scanner checks добавлены для unsafe direct key, unsafe `defaultsKey`, safe namespaced key, legacy exception и `stats.` prefix.
+
+**Ожидаемый эффект:** новые persisted settings/stats keys будут сразу получать namespace. Это снижает риск коллизий между settings, stats, onboarding, history и другими доменами хранения.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 38 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 340 tests / 47 suites.
+
+## Шаг 169. DI boundary для `UserDefaults.standard`
+
+**Наблюдение:** `OnboardingCompletionStore` уже имел injectable closures для deterministic tests, но production defaults внутри closure initializer напрямую ссылались на `UserDefaults.standard`. Это не ломало тестируемость, однако оставляло в app layer явный singleton access и ослабляло правило проекта: side effects должны проходить через initializer injection.
+
+**Изменения:**
+- `OnboardingCompletionStore` получил отдельный `init(defaults: UserDefaults = .standard)`;
+- closure initializer стал чистым DI initializer без production defaults;
+- поведение `OnboardingCompletionStore()` сохранено для `AppDelegate`;
+- добавлен safety-test `appSourcesDoNotAccessUserDefaultsStandardDirectly`;
+- scanner запрещает прямой `UserDefaults.standard` в app sources, но допускает injected shorthand `.standard` в initializer defaults.
+
+**Ожидаемый эффект:** новые persisted stores не будут незаметно обращаться к `UserDefaults.standard` напрямую. Production dependency остается дефолтной, но проходит через явную точку инъекции, что упрощает тестирование и будущую замену storage backend.
+
+**Статус:** verified. Targeted OnboardingCompletionStoreTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 42 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 341 tests / 47 suites.
+
+## Шаг 170. DI boundary для `FileManager.default` в `UserDictionary`
+
+**Наблюдение:** `UserDictionary` уже был хорошо подготовлен к deterministic tests через injectable storage closures, но production defaults внутри DI initializer напрямую использовали `FileManager.default`. Это повторяло тот же паттерн, что и в шаге 169: тестируемость есть, но singleton access остается внутри app source и может распространяться дальше.
+
+**Изменения:**
+- `UserDictionary` получил отдельный production initializer `init(language:storageURL:fileManager:)`;
+- файловые операции `createDirectory`, `fileExists`, `urls(for:in:)` теперь завязаны на injected `FileManager`;
+- closure initializer стал чистым DI initializer без `FileManager.default` defaults;
+- `fileURL(for:fileManager:)` принимает injected `FileManager` и использует shorthand `.default` только на границе production initializer-а;
+- `UserDictionaryTests` явно передает storage closures;
+- добавлен safety-test `appSourcesDoNotAccessFileManagerDefaultDirectly`.
+
+**Ожидаемый эффект:** новые filesystem-backed services не будут незаметно брать `FileManager.default` напрямую. Production behavior сохранен, но dependency boundary стал явным и совместимым с правилами проекта по DI.
+
+**Статус:** verified. Targeted UserDictionaryTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 42 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 342 tests / 47 suites.
+
+## Шаг 171. DI boundary для `NSWorkspace.shared` в `PresentationModeDetector`
+
+**Наблюдение:** `PresentationModeDetector` уже поддерживал deterministic tests через `frontmostBundleIDProvider`, но production default closure напрямую обращалась к `NSWorkspace.shared`. Это сохраняло скрытую singleton dependency внутри detector-а, хотя сам сервис уже был value-typed и хорошо подходил для явной dependency boundary.
+
+**Изменения:**
+- `PresentationModeDetector` получил production initializer `init(workspace:presentationBundleIDs:)`;
+- lookup frontmost bundle ID теперь строится от injected `NSWorkspace`;
+- initializer с `frontmostBundleIDProvider` стал чистым DI initializer без production default closure;
+- поведение `PresentationModeDetector()` сохранено через shorthand `.shared` на границе production initializer-а;
+- добавлен safety-test `presentationModeDetectorDoesNotAccessNSWorkspaceSharedDirectly`;
+- scanner запрещает прямой `NSWorkspace.shared` именно в `PresentationModeDetector.swift`, не блокируя пока отдельные существующие `NSWorkspace` usage sites в других сервисах.
+
+**Ожидаемый эффект:** detector остается value-typed вычислительным сервисом с явной dependency boundary. Будущий возврат к прямому `NSWorkspace.shared` внутри detector-а будет пойман safety-suite.
+
+**Статус:** verified. Targeted PresentationModeDetectorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 46 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 343 tests / 47 suites.
+
+## Шаг 172. DI boundary для `NSWorkspace.shared` в `FocusedAppObserver`
+
+**Наблюдение:** `FocusedAppObserver` уже имел injectable closures для current app snapshot, workspace activation observer и observer removal, но production defaults внутри этого же initializer напрямую использовали `NSWorkspace.shared`. Это смешивало production singleton wiring и test DI в одной сигнатуре.
+
+**Изменения:**
+- `FocusedAppObserver` получил production initializer `init(roleProvider:workspace:)`;
+- current-app snapshot, activation observer и removal теперь строятся от injected `NSWorkspace`;
+- closure initializer стал чистым DI initializer без production defaults;
+- behavior `FocusedAppObserver()` сохранен через shorthand `.shared` на production boundary;
+- добавлен safety-test `focusedAppObserverDoesNotAccessNSWorkspaceSharedDirectly`.
+
+**Ожидаемый эффект:** наблюдение за frontmost app остается полностью тестируемым, а прямой `NSWorkspace.shared` больше не живет внутри runtime observer-а. Будущий откат будет пойман safety-suite.
+
+**Статус:** verified. Targeted FocusedAppObserverTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 48 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 344 tests / 47 suites.
+
+## Шаг 173. DI boundary для `NSWorkspace` lookup в `ExclusionList`
+
+**Наблюдение:** `ExclusionList` уже поддерживал deterministic UI sorting через injected `localizedNameProvider`, но production helper `localizedName(for:)` напрямую использовал `NSWorkspace.shared.urlForApplication(...)`. Это оставляло скрытую workspace dependency внутри списка исключений и усложняло контроль за singleton usage.
+
+**Изменения:**
+- `ExclusionList` получил production initializer `init(defaults:workspace:)`;
+- initializer с `localizedNameProvider` стал чистым DI initializer без production default closure;
+- `localizedName(for:)` теперь принимает injected `NSWorkspace` через параметр helper-а;
+- добавлен тест `sortedEntriesUseInjectedLocalizedNameProvider` для явной проверки DI lookup-а;
+- добавлен safety-test `exclusionListDoesNotAccessNSWorkspaceSharedDirectly`.
+
+**Ожидаемый эффект:** список исключений сохраняет прежнее production-поведение, но UI name lookup стал явной dependency boundary. Будущий возврат прямого `NSWorkspace.shared` в `ExclusionList.swift` будет пойман safety-suite.
+
+**Статус:** verified. Targeted ExclusionListTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 50 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 346 tests / 47 suites.
+
+## Шаг 174. DI boundary для `NSWorkspace` opener в `AccessibilityPermission`
+
+**Наблюдение:** `AccessibilityPermission` уже имел injectable closures для trust status, permission prompt, opening System Settings и polling timer, но production defaults находились в том же initializer. Из-за этого `systemSettingsOpener` напрямую использовал `NSWorkspace.shared.open(...)`, смешивая production wiring и deterministic DI.
+
+**Изменения:**
+- `AccessibilityPermission` получил production initializer `init(pollingInterval:workspace:)`;
+- opening System Settings теперь строится от injected `NSWorkspace`;
+- trust status, trust prompt и polling timer остались production defaults только на production boundary;
+- closure initializer стал чистым DI initializer без production default closures;
+- тесты переведены на локальный `makePermission(...)` helper с безопасными stubs;
+- добавлен safety-test `accessibilityPermissionDoesNotAccessNSWorkspaceSharedDirectly`.
+
+**Ожидаемый эффект:** permission observer сохраняет прежнее runtime-поведение, но direct workspace singleton больше не находится внутри DI initializer-а. Будущий возврат прямого `NSWorkspace.shared` в `AccessibilityPermission.swift` будет пойман safety-suite.
+
+**Статус:** verified. Targeted AccessibilityPermissionTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 50 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 347 tests / 47 suites.
+
+## Шаг 175. DI boundary для `Bundle.main` в `HelpBodyLoader`
+
+**Наблюдение:** контрольный singleton-scan после закрытия `NSWorkspace.shared` показал прямое чтение `Bundle.main` в `HelpBodyLoader.bundledResource(...)`. Сам loader уже поддерживал injected `ResourceLoader`, но production default resource loader был смешан с DI initializer-ом.
+
+**Изменения:**
+- `HelpBodyLoader` получил production initializer `init(bundle:)` с default shorthand `.main`;
+- initializer `init(resourceLoader:)` стал чистым DI initializer без production default closure;
+- bundled markdown lookup теперь читает resources из injected `Bundle`;
+- добавлен safety-test `helpContentDoesNotAccessBundleMainDirectly`;
+- scanner получил `bundleMainViolations(...)` и self-check fixtures для `Bundle.main` / `.main`.
+
+**Ожидаемый эффект:** help markdown loader сохраняет прежнее production-поведение, но прямой `Bundle.main` больше не живет внутри resource lookup-а. Будущий откат будет пойман safety-suite.
+
+**Статус:** verified. Targeted HelpContentTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 49 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 348 tests / 47 suites.
+
+## Шаг 176. DI boundary для `UNUserNotificationCenter.current()` в `NotificationManager`
+
+**Наблюдение:** `NotificationManager` уже использовал injectable closures для delegate, authorization, categories, posting и removal, но production defaults внутри DI initializer-а напрямую обращались к `UNUserNotificationCenter.current()`. Это смешивало runtime notification center wiring и deterministic test boundary.
+
+**Изменения:**
+- `NotificationManager` получил production initializer `init(notificationCenter:makeNotificationID:)`;
+- delegate setup, authorization request, category registration, posting и removal теперь строятся от injected `UNUserNotificationCenter`;
+- closure initializer стал чистым DI initializer без production default closures;
+- `NotificationManagerTests` переведены на локальный `makeManager(...)` helper с безопасными stubs;
+- добавлен safety-test `notificationManagerDoesNotAccessCurrentNotificationCenterDirectly`;
+- scanner получил `notificationCenterCurrentViolations(...)` и self-check fixtures для `UNUserNotificationCenter.current()` / `.current()`.
+
+**Ожидаемый эффект:** notification flow сохраняет прежнее production-поведение, но прямой singleton lookup больше не живет внутри testable initializer-а. Будущий откат будет пойман safety-suite.
+
+**Статус:** verified. Targeted NotificationManagerTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 52 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 349 tests / 47 suites.
+
+## Шаг 177. DI boundary для timer/status defaults в `SecureInputObserver`
+
+**Наблюдение:** `SecureInputObserver` уже имел injectable `secureInputStatusProvider` и `pollingTimerFactory`, но production defaults находились прямо в testable initializer-е. Это смешивало Carbon secure-input lookup, real `Timer` wiring и deterministic test boundary.
+
+**Изменения:**
+- `SecureInputObserver` получил production initializer `init(interval:)`;
+- `IsSecureEventInputEnabled()` и real run-loop `Timer` теперь создаются только на production boundary;
+- closure initializer стал чистым DI initializer без production default closures;
+- тесты переведены на локальный `makeObserver(...)` helper с безопасными stubs;
+- добавлен safety-test `secureInputObserverKeepsInitializerDefaultsOnProductionBoundaryOnly`;
+- scanner получил `defaultedInjectedClosureViolations(...)` для защиты от возврата production defaults в DI initializer.
+
+**Ожидаемый эффект:** secure-input observer сохраняет прежнее runtime-поведение, но тестируемый initializer больше не несет скрытых production side effects. Будущий откат будет пойман safety-suite.
+
+**Статус:** verified. Targeted SecureInputObserverTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 51 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 350 tests / 47 suites.
+
+## Шаг 178. Injected delay boundary для `SequenceDetector`
+
+**Наблюдение:** `SequenceDetector` является state machine для coalescing multi-word retype candidates и не должен владеть production timing primitive. До шага в initializer-е был default closure с `Task.sleep(for:)`, из-за чего низкоуровневый detector сам знал о runtime delay implementation.
+
+**Изменения:**
+- initializer `SequenceDetector` теперь требует явный `sleepBeforeFlush` без production default;
+- production/test delay остается responsibility owner-а (`TypingPipeline`), который уже передает closure при создании detector-а;
+- добавлен safety-test `sequenceDetectorDoesNotUseTaskSleepDirectly`;
+- guard сканирует `LayoutSwitcher/Pipeline/SequenceDetector.swift` после удаления comments/strings и запрещает возврат `Task.sleep` внутрь detector-а.
+
+**Ожидаемый эффект:** `SequenceDetector` стал более чистым и детерминированным компонентом: он управляет только состоянием pending sequence, а time primitive приходит через DI. Это снижает риск скрытых async side effects и упрощает дальнейшую изоляцию production delay на верхнем boundary.
+
+**Статус:** verified. Targeted TypingPipelineTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 72 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 351 tests / 47 suites.
+
+## Шаг 179. Production delay boundary для `TypingPipeline`
+
+**Наблюдение:** после очистки `SequenceDetector` следующий скрытый production timing primitive оставался в initializer-е `TypingPipeline`: `sleepBeforeSequenceFlush` имел default closure с `Task.sleep(for:)`. Для тестируемого pipeline это лишний side effect default, потому что время sequence lookahead должно приходить через явную DI-зависимость.
+
+**Изменения:**
+- `TypingPipeline` теперь требует явные `sleepBeforeSequenceFlush` и `now` без production defaults;
+- production `Task.sleep(for:)` и `Date.init` перенесены в `AppDelegate` при сборке runtime pipeline;
+- сборка runtime pipeline вынесена в `makePipeline()` вместо прямого `TypingPipeline(...)` в lazy property initializer;
+- прямой unit-test setup в `TypingPipelineTests` получил явные deterministic delay и `now`;
+- добавлен safety-test `typingPipelineDoesNotUseTaskSleepDirectly`;
+- guard сканирует `LayoutSwitcher/Pipeline/TypingPipeline.swift` после удаления comments/strings и запрещает возврат `Task.sleep` внутрь pipeline.
+
+**Ожидаемый эффект:** `TypingPipeline` остается orchestration-компонентом с явной dependency injection для времени, а production sleep находится на app composition boundary. Это уменьшает скрытые async side effects и делает future tests менее зависимыми от wall-clock scheduling.
+
+**Статус:** verified. Targeted TypingPipelineTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 74 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 352 tests / 47 suites.
+
+## Шаг 180. Pure DI boundary для `Retyper`
+
+**Наблюдение:** `Retyper` уже поддерживал injected side effects, но production defaults оставались внутри initializer-а через optional closures: lookup enabled layouts/current layout, layout refresh/select, `Task.sleep(nanoseconds:)`, CGEvent posting и `CapsLockGuard()`. Это смешивало deterministic retype logic и runtime I/O в одном constructor-е.
+
+**Изменения:**
+- `Retyper` переведен на pure-DI initializer без `InputSourceManaging` и optional production defaults;
+- production composition перенесен в `AppDelegate.makeRetyper()`;
+- production `Task.sleep(nanoseconds:)`, input-source operations, CGEvent posting и `CapsLockGuard()` теперь задаются на app boundary;
+- `RetyperTests`, `TypingPipelineTests` и `HotkeyCoordinatorTests` получили явные deterministic closures и inert `CapsLockGuard`;
+- добавлен safety-test `retyperDoesNotUseTaskSleepDirectly`;
+- guard сканирует `LayoutSwitcher/Mapping/Retyper.swift` после удаления comments/strings и запрещает возврат `Task.sleep` внутрь `Retyper`.
+
+**Ожидаемый эффект:** `Retyper` стал вычислительно-оркестрационным value type с полностью явными side-effect dependencies. Runtime-поведение сохраняется через `AppDelegate`, а тесты больше не получают скрытый access к реальным input sources, Caps Lock или wall-clock sleep.
+
+**Статус:** verified. Targeted RetyperTests + TypingPipelineTests + HotkeyCoordinatorTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 91 tests / 5 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 353 tests / 47 suites.
+
+## Шаг 181. Explicit production factory для `CapsLockGuard`
+
+**Наблюдение:** после шага 180 `Retyper` больше не создавал `CapsLockGuard` внутри себя, но сам `CapsLockGuard` все еще имел production defaults в initializer-е: `CGEventSource.flagsState(...)` и IOKit setter были доступны как скрытые default closures. Это оставляло маленькую лазейку: простой `CapsLockGuard()` снова мог бы подключить live system state без явного выбора production boundary.
+
+**Изменения:**
+- initializer `CapsLockGuard` теперь требует явные `readCapsLockState` и `setCapsLockState` closures;
+- production composition перенесен в `CapsLockGuard.live()`;
+- `AppDelegate.makeRetyper()` теперь передает `CapsLockGuard.live()` вместо `CapsLockGuard()`;
+- добавлен safety-test `capsLockGuardRequiresExplicitSideEffectClosures`;
+- guard проверяет, что live Caps Lock closures не возвращены как default arguments initializer-а.
+
+**Ожидаемый эффект:** Caps Lock I/O остается доступным для runtime, но больше не включается неявно через пустой initializer. Тесты и будущие call sites должны явно выбирать deterministic closures или production factory, что лучше соответствует DI-дисциплине проекта.
+
+**Статус:** verified. Targeted CapsLockGuardTests + RetyperTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 63 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 354 tests / 47 suites.
+
+## Шаг 182. Explicit clock boundary для `WordBuffer`
+
+**Наблюдение:** `WordBuffer` хранит mutable typing buffer и формирует `CommittedWord.committedAt` при commit-е. До шага clock был injectable, но production `Date.init` оставался default argument в initializer-е. Это делало простой `WordBuffer()` скрытым обращением к wall-clock state, хотя runtime clock должен выбираться на composition boundary.
+
+**Изменения:**
+- initializer `WordBuffer` теперь требует явный `now` closure без `Date.init` default;
+- production `Date.init` перенесен в `AppDelegate` при создании `wordBuffer`;
+- `WordBufferTests` и прямые `TypingPipelineTests` получили deterministic fixed clock;
+- добавлен safety-test `wordBufferRequiresExplicitClock`;
+- guard проверяет, что `WordBuffer` не возвращает `Date.init` / `Date()` как default clock.
+
+**Ожидаемый эффект:** timestamps committed words остаются runtime-функцией приложения, но unit tests и future call sites больше не получают скрытый wall-clock dependency через пустой initializer. Это продолжает линию явных time boundaries после `SequenceDetector` и `TypingPipeline`.
+
+**Статус:** verified. Targeted WordBufferTests + TypingPipelineTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 84 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 355 tests / 47 suites.
+
+## Шаг 183. Pure DI boundary для `SmartPaste`
+
+**Наблюдение:** `SmartPaste` уже был value type и имел test initializer с injected dependencies, но production initializer `init(inputSources:)` все еще подключал runtime side effects внутри самого helper-а: `NSPasteboard.general`, synthetic key posting и `Task.sleep(nanoseconds:)`. Это повторяло уже закрытый паттерн из `Retyper`: orchestration-компонент сам знал о production I/O.
+
+**Изменения:**
+- `SmartPaste` переведен на единственный explicit DI initializer с `pasteboardRead`, `postKeyEvent` и `sleep`;
+- production composition перенесен в `AppDelegate.makeSmartPaste()`;
+- synthetic key posting вынесен в явную `SmartPaste.postKey(keyCode:flags:)`, которую production boundary передает как closure;
+- `NSPasteboard.general` и `Task.sleep(nanoseconds:)` больше не находятся внутри `SmartPaste` initializer-а;
+- добавлен safety-test `smartPasteKeepsProductionDependenciesOnAppBoundary`;
+- guard запрещает возврат `Task.sleep` и `NSPasteboard.general` внутрь `LayoutSwitcher/Mapping/SmartPaste.swift`.
+
+**Ожидаемый эффект:** smart-paste остается runtime-функцией приложения, но сам helper больше не содержит скрытого clipboard/wall-clock wiring. Тесты и future call sites должны явно выбирать deterministic closures или production boundary, что укрепляет DI-дисциплину вокруг pasteboard и synthetic input.
+
+**Статус:** verified. Targeted SmartPasteTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 62 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 356 tests / 47 suites.
+
+## Шаг 184. Pure DI boundary для `SelectionConverter`
+
+**Наблюдение:** `SelectionConverter` уже был value type и имел explicit DI initializer для Accessibility, pasteboard, key posting и delay, но рядом оставался production initializer `init(mapping:focused:)`. Он напрямую подключал `AXUIElementCreateSystemWide`, `NSPasteboard.general`, synthetic `CGEvent` posting и `Task.sleep(nanoseconds:)`. При этом production call site для этого initializer-а сейчас отсутствует, то есть скрытая runtime-дверь была лишней и противоречила текущей DI-дисциплине.
+
+**Изменения:**
+- удален production initializer `SelectionConverter.init(mapping:focused:)`;
+- `SelectionConverter` оставлен с единственным explicit DI initializer-ом;
+- удалена ненужная зависимость `import AppKit` из файла converter-а;
+- добавлен safety-test `selectionConverterKeepsProductionDependenciesInjected`;
+- guard запрещает возврат `Task.sleep`, `NSPasteboard.general` и `AXUIElementCreateSystemWide` внутрь `LayoutSwitcher/Mapping/SelectionConverter.swift`.
+
+**Ожидаемый эффект:** manual selection conversion остается полностью тестируемым orchestration helper-ом. Future production wiring должен быть добавлен явно на app boundary, а не спрятан в helper initializer-е, что снижает риск неявного доступа к Accessibility, clipboard и wall-clock scheduling.
+
+**Статус:** verified. Targeted SelectionConverterTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 59 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 357 tests / 47 suites.
+
+## Шаг 185. Explicit clock boundary для `HotkeyCoordinator`
+
+**Наблюдение:** `HotkeyCoordinator` уже использует injectable `now` для undo/manual окон, но initializer всё еще оставлял production-default `Date.init`. Это удобно для вызова, но нарушает текущую DI-дисциплину проекта: время является side effect и должно явно передаваться на composition boundary, чтобы тесты не могли случайно вернуться к wall-clock behavior.
+
+**Изменения:**
+- у `HotkeyCoordinator.init(...)` удален default `now: Date.init`;
+- `AppDelegate` теперь явно передает `now: Date.init` при создании production coordinator;
+- тестовая fixture `HotkeyCoordinatorTests` сохраняет deterministic clock через `now: { currentDate }`;
+- `SwiftSafetyRulesTests` получил guard `hotkeyCoordinatorRequiresExplicitClock`, запрещающий возврат `= Date.init` / `= Date()` в coordinator initializer.
+
+**Ожидаемый эффект:** hotkey orchestration становится полностью явной по времени: runtime получает системные часы только на app boundary, а unit tests обязаны передавать controlled clock. Это снижает риск flaky behavior вокруг undo/manual windows и укрепляет правило “side effects only through injection”.
+
+**Статус:** verified. Targeted HotkeyCoordinatorTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 65 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 358 tests / 47 suites.
+
+## Шаг 186. Explicit `UserDefaults` boundary для `OnboardingCompletionStore`
+
+**Наблюдение:** `OnboardingCompletionStore` уже имел тестируемый initializer через `readCompleted` / `writeCompleted`, но convenience initializer скрывал production dependency через `UserDefaults = .standard`. Для first-run состояния это небольшой, но важный источник неявной глобальной зависимости: app boundary должен явно передавать persistent storage, а сам store должен оставаться deterministic и injection-friendly.
+
+**Изменения:**
+- у `OnboardingCompletionStore.init(defaults:)` удален default `.standard`;
+- `AppDelegate` теперь явно создает `OnboardingCompletionStore(defaults: .standard)`;
+- closure-based initializer для тестов сохранен без изменения поведения;
+- `SwiftSafetyRulesTests` получил guard `onboardingCompletionStoreRequiresExplicitDefaults`, запрещающий возврат `UserDefaults = .standard` / `UserDefaults.standard` внутрь store.
+
+**Ожидаемый эффект:** completion-state onboarding больше не несет скрытую production-зависимость. Тесты продолжают использовать deterministic closures, а runtime wiring остается в composition root.
+
+**Статус:** verified. Targeted OnboardingCompletionStoreTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 60 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 359 tests / 47 suites.
+
+## Шаг 187. Explicit `UserDefaults` boundary для `HotkeyRegistry`
+
+**Наблюдение:** `HotkeyRegistry` хранит пользовательские хоткеи и уже хорошо тестируется через isolated `UserDefaults` suites, но production initializer всё еще имел скрытый default `UserDefaults = .standard`. Для mutable UI-bound registry это оставляет неявную глобальную зависимость внутри сервиса, хотя реальное место выбора persistent storage должно быть в `AppDelegate`.
+
+**Изменения:**
+- у `HotkeyRegistry.init(defaults:)` удален default `.standard`;
+- `AppDelegate` теперь явно создает `HotkeyRegistry(defaults: .standard)`;
+- существующие `HotkeyRegistryTests` остались deterministic и продолжают передавать isolated defaults;
+- `SwiftSafetyRulesTests` получил guard `hotkeyRegistryRequiresExplicitDefaults`, запрещающий возврат `UserDefaults = .standard` / `UserDefaults.standard` внутрь registry.
+
+**Ожидаемый эффект:** хранение hotkey bindings теперь следует тому же правилу, что и onboarding completion: production storage выбирается на composition boundary, а сам registry остается явно сконфигурированным и тестируемым.
+
+**Статус:** verified. Targeted HotkeyRegistryTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 71 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 360 tests / 47 suites.
+
+## Шаг 188. Explicit `UserDefaults` boundary для `RecentSwitches`
+
+**Наблюдение:** `RecentSwitches` является `@Observable` history-store для последних исправлений и уже получает isolated defaults в unit tests, но production initializer всё еще скрывал `UserDefaults = .standard`. Для persisted state это тот же класс риска, что и у hotkey/onboarding storage: сервис выглядит полностью инъектируемым в тестах, но при обычном вызове может незаметно уйти в global defaults.
+
+**Изменения:**
+- у `RecentSwitches.init(defaults:)` удален default `.standard`;
+- `AppDelegate` теперь явно создает `RecentSwitches(defaults: .standard)`;
+- существующие `RecentSwitchesTests`, `HotkeyCoordinatorTests` и `TypingPipelineTests` сохраняют deterministic defaults через явную передачу suite;
+- `SwiftSafetyRulesTests` получил guard `recentSwitchesRequiresExplicitDefaults`, запрещающий возврат `UserDefaults = .standard` / `UserDefaults.standard` внутрь recent history store.
+
+**Ожидаемый эффект:** persisted history последних переключений теперь полностью следует DI-правилу проекта: storage выбирается на composition boundary, а сам сервис не содержит скрытой production-зависимости.
+
+**Статус:** verified. Targeted RecentSwitchesTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 67 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 361 tests / 47 suites.
+
+## Шаг 189. Explicit `UserDefaults` boundary для `PerAppLayoutPreferences`
+
+**Наблюдение:** `PerAppLayoutPreferences` хранит persisted mapping `bundleID → inputSourceID` и участвует в предотвращении ввода в неверной раскладке при смене приложения. Тесты уже передают isolated defaults, но production initializer всё еще имел скрытый default `UserDefaults = .standard`, что нарушает общий DI-подход для persisted state.
+
+**Изменения:**
+- у `PerAppLayoutPreferences.init(defaults:)` удален default `.standard`;
+- `AppDelegate` теперь явно создает `PerAppLayoutPreferences(defaults: .standard)`;
+- существующие `PerAppLayoutPreferencesTests` остались deterministic и продолжают передавать isolated defaults;
+- `SwiftSafetyRulesTests` получил guard `perAppLayoutPreferencesRequiresExplicitDefaults`, запрещающий возврат `UserDefaults = .standard` / `UserDefaults.standard` внутрь per-app preferences store.
+
+**Ожидаемый эффект:** persisted preferences по приложениям теперь создаются так же явно, как hotkeys, onboarding completion и recent switches. Storage выбирается на composition boundary, а сам store остается без скрытой production-зависимости.
+
+**Статус:** verified. Targeted PerAppLayoutPreferencesTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 69 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 362 tests / 47 suites.
+
+## Шаг 190. Explicit defaults и clock boundary для `UsageStats`
+
+**Наблюдение:** `UsageStats` хранит счетчики в `UserDefaults` и использует текущую дату для day rollover. До шага 190 initializer сам подставлял `.standard` и `Date.init`, из-за чего production dependencies были спрятаны внутри модели статистики.
+
+**Изменения:**
+- initializer `UsageStats` теперь требует явные `defaults` и `now`;
+- `AppDelegate` стал единственной production-точкой, где передаются `.standard` и `Date.init`;
+- тестовые потребители `TypingPipelineTests` и `HotkeyCoordinatorTests` получили детерминированный clock через `Date(timeIntervalSince1970: 0)`;
+- `SwiftSafetyRulesTests` получил guard `usageStatsRequiresExplicitDefaultsAndClock`, запрещающий возврат скрытых `.standard` / `Date.init` defaults внутрь `UsageStats`.
+
+**Ожидаемый эффект:** статистика остается UI-bound `@Observable` reference type, но ее side effects и clock теперь явно видны на composition boundary. Это снижает риск недетерминированных тестов и случайного чтения live `UserDefaults` вне `AppDelegate`.
+
+**Статус:** verified. Targeted TypingPipelineTests + HotkeyCoordinatorTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 94 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 363 tests / 47 suites.
+
+## Шаг 191. Explicit defaults и clock boundary для `AppState`
+
+**Наблюдение:** `AppState` является корректным `@Observable` reference type, потому что хранит UI-bound runtime/settings state. При этом initializer скрывал две production-зависимости: `UserDefaults.standard` и live clock `Date.init`. Это размывало границу между моделью состояния и composition root.
+
+**Изменения:**
+- initializer `AppState` теперь требует явные `defaults` и `now`;
+- `AppDelegate` явно создает production `AppState(defaults: .standard, now: Date.init)`;
+- `AppStateTests`, `TypingPipelineTests` и `HotkeyCoordinatorTests` передают детерминированный clock;
+- `SwiftSafetyRulesTests` получил guard `appStateRequiresExplicitDefaultsAndClock`, запрещающий возврат скрытых production defaults внутрь `AppState`.
+
+**Ожидаемый эффект:** `AppState` остается центральной main-actor моделью UI-состояния, но persistence и clock теперь видны при сборке зависимостей. Это улучшает тестируемость snooze/settings-сценариев и продолжает линию проекта: production dependencies живут на границе приложения, а не внутри сервисов/моделей.
+
+**Статус:** verified. Targeted AppStateTests + TypingPipelineTests + HotkeyCoordinatorTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 99 tests / 5 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 364 tests / 47 suites.
+
+## Шаг 192. Explicit defaults и workspace boundary для `ExclusionList`
+
+**Наблюдение:** `ExclusionList` уже имел injectable `localizedNameProvider`, но его convenience initializer скрывал две production-зависимости: `UserDefaults.standard` и `NSWorkspace.shared`. Из-за этого тестовый pipeline мог случайно получать live workspace lookup, хотя для логики исключений это не требуется.
+
+**Изменения:**
+- initializer `ExclusionList(defaults:workspace:)` теперь требует явные `defaults` и `workspace`;
+- initializer `ExclusionList(defaults:localizedNameProvider:)` теперь также требует явные `defaults`;
+- `AppDelegate` стал явной production-точкой для `.standard` и `.shared`;
+- `TypingPipelineTests` использует deterministic `localizedNameProvider`, не обращаясь к live `NSWorkspace`;
+- `SwiftSafetyRulesTests` получил guard `exclusionListRequiresExplicitDefaultsAndWorkspace`.
+
+**Ожидаемый эффект:** список исключений сохраняет поведение первого запуска и migration logic, но production dependencies больше не спрятаны в default-параметрах initializer-ов. Это продолжает вынос side effects на composition boundary и делает pipeline-fixtures чище.
+
+**Статус:** verified. Targeted ExclusionListTests + TypingPipelineTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 94 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 365 tests / 47 suites.
+
+## Шаг 193. Injected bundle-name lookup для recent/per-app UI
+
+**Наблюдение:** после явного `ExclusionList(defaults:workspace:)` оставались прямые вызовы `ExclusionList.localizedName(for:)` в `HotkeyCoordinator`, `RetypeDispatcher` и `PerAppLayoutPreferences`. Эти вызовы не влияют на алгоритм переключения, но являются UI/diagnostic lookup side effect через `NSWorkspace`, спрятанным внутри runtime-сервисов.
+
+**Изменения:**
+- `HotkeyCoordinator` получил injected `bundleNameProvider` для manual/selection recent entries;
+- `RetypeDispatcher` получил injected `bundleNameProvider` для automatic recent entries;
+- `TypingPipeline` прокидывает `bundleNameProvider` в dispatcher;
+- `PerAppLayoutPreferences` получил injected `appNameProvider` для сортировки настроек per-app layouts;
+- `AppDelegate` стал единственной production-точкой, где эти provider-ы связываются с `ExclusionList.localizedName(for:workspace:)`;
+- `SwiftSafetyRulesTests` получил guard `bundleNameLookupsStayInjectedOutsideAppBoundary`.
+
+**Ожидаемый эффект:** lookup названий приложений теперь явно находится на composition boundary, а core runtime-сервисы работают с injected provider-ами. Это уменьшает неявные зависимости от `NSWorkspace`, упрощает тесты и сохраняет прежнее поведение UI/recent history в production.
+
+**Статус:** verified. Targeted HotkeyCoordinatorTests + TypingPipelineTests + PerAppLayoutPreferencesTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 106 tests / 5 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 366 tests / 47 suites.
+
+## Шаг 194. Explicit `NSSpellChecker` boundary для `SystemSpellCheckerDictionary`
+
+**Наблюдение:** `SystemSpellCheckerDictionary` уже был хорошо тестируемым через `SpellChecking`, но production singleton `NSSpellChecker.shared` оставался default argument внутри adapter initializer. Из-за этого любой новый вызов `SystemSpellCheckerDictionary(language:)` мог незаметно получить живой macOS spell checker, минуя явную DI-точку.
+
+**Изменения:**
+- initializer `SystemSpellCheckerDictionary` теперь требует explicit `checker: any SpellChecking`;
+- factory `LayoutDetector.defaultMultilingual(...)` принимает `systemSpellChecker` явно и прокидывает его во все системные dictionary adapters;
+- production wiring в `AppDelegate` передает `NSSpellChecker.shared` на границе приложения;
+- `LayoutDetectorTests` используют deterministic `DeterministicSpellChecker`, не зависящий от системных словарей macOS;
+- `SwiftSafetyRulesTests` получил guard `systemSpellCheckerStaysInjectedOutsideAppBoundary`, запрещающий вернуть `NSSpellChecker.shared` в adapter/factory internals.
+
+**Ожидаемый эффект:** системный spell checker остается production dependency, но больше не прячется в default parameter. Тесты и фабрики становятся честнее: источник macOS API виден в call site, а detector defaults остаются композицией зависимостей, а не местом скрытого singleton-доступа.
+
+**Статус:** verified. Первый targeted run выявил, что полностью rejecting fake ломает сценарий `romanianMultipleDiacriticVariantsAreKept`; fake заменен на deterministic checker, который явно знает только нужное test word `tara` для `ro`. Targeted SystemSpellCheckerTests + LayoutDetectorTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 96 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 367 tests / 47 suites.
+
+## Шаг 195. Explicit `NSWorkspace` boundary для `FocusedAppObserver`
+
+**Наблюдение:** `FocusedAppObserver` уже имел injectable closures для frontmost app snapshot, activation observer и observer removal. Однако convenience initializer всё еще скрывал production dependency через `workspace: NSWorkspace = .shared`. Это не прямой `NSWorkspace.shared` access, но по смыслу такой же implicit production default: новый call site мог создать live observer без явного выбора workspace boundary.
+
+**Изменения:**
+- convenience initializer `FocusedAppObserver` теперь требует explicit `workspace: NSWorkspace`;
+- `AppDelegate` стал единственным production call site и передает `.shared` явно;
+- `SwiftSafetyRulesTests` получил guard `focusedAppObserverRequiresExplicitWorkspaceBoundary`, который запрещает возврат `NSWorkspace = .shared` в observer initializer;
+- существующий testable initializer с injected closures сохранен без изменения поведения.
+
+**Ожидаемый эффект:** workspace dependency стала видимой на границе приложения. `FocusedAppObserver` остается удобным production adapter, но больше не прячет live macOS workspace внутри default argument.
+
+**Статус:** verified. Первый targeted compile выявил два legacy test fixtures в `TypingPipelineTests`, где использовался implicit `FocusedAppObserver()`; fixtures переведены на injected observer через deterministic closures. Targeted FocusedAppObserverTests + AppDelegateTests + TypingPipelineTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 96 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 368 tests / 47 suites.
+
+## Шаг 196. Explicit `NSWorkspace` boundary для `PresentationModeDetector`
+
+**Наблюдение:** `PresentationModeDetector` уже имел deterministic initializer через `frontmostBundleIDProvider`, но production initializer держал `workspace: NSWorkspace = .shared`. Это оставляло скрытый live macOS dependency внутри value-typed detector и позволяло создавать production-backed detector без явного указания workspace boundary.
+
+**Изменения:**
+- initializer `PresentationModeDetector(workspace:presentationBundleIDs:)` теперь требует explicit `workspace`;
+- `AppDelegate` стал явным production call site и передает `.shared`;
+- `SwiftSafetyRulesTests` получил guard `presentationModeDetectorRequiresExplicitWorkspaceBoundary`;
+- существующие tests с `frontmostBundleIDProvider` не менялись и остаются deterministic.
+
+**Ожидаемый эффект:** presentation-mode detection сохраняет прежнее поведение, но зависимость от `NSWorkspace` теперь видна в production wiring. Случайный возврат к implicit `.shared` будет пойман safety-suite.
+
+**Статус:** verified. Targeted PresentationModeDetectorTests + AppDelegateTests + TypingPipelineTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 96 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 369 tests / 47 suites.
+
+## Шаг 197. Explicit `NSWorkspace` boundary для `AccessibilityPermission`
+
+**Наблюдение:** `AccessibilityPermission` уже имел injectable closures для trust state, prompt requester, settings opener и polling timer. Однако convenience initializer скрывал production dependency через `workspace: NSWorkspace = .shared`, поэтому новый call site мог создать live permission observer без явного указания macOS workspace boundary.
+
+**Изменения:**
+- convenience initializer `AccessibilityPermission(pollingInterval:workspace:)` теперь требует explicit `workspace`;
+- `AppDelegate` стал явным production call site и передает `.shared`;
+- `SwiftSafetyRulesTests` получил guard `accessibilityPermissionRequiresExplicitWorkspaceBoundary`;
+- существующие tests с injected closures не менялись и остаются deterministic.
+
+**Ожидаемый эффект:** Accessibility permission flow сохраняет прежнее поведение, но зависимость от `NSWorkspace` теперь видна в production wiring. Случайный возврат к implicit `.shared` будет пойман safety-suite.
+
+**Статус:** verified. Targeted AccessibilityPermissionTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 74 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 370 tests / 47 suites.
+
+## Шаг 198. Explicit `FileManager` boundary для `UserDictionary`
+
+**Наблюдение:** `UserDictionary` уже поддерживал injectable storage closures для deterministic tests, но production convenience initializer и helper `fileURL(...)` оставляли скрытый filesystem dependency через `FileManager = .default`. Это делало live storage boundary менее заметной и позволяло создать filesystem-backed dictionary без явного выбора `FileManager`.
+
+**Изменения:**
+- convenience initializer `UserDictionary(language:storageURL:fileManager:)` теперь требует explicit `fileManager`;
+- helper `fileURL(for:fileManager:)` больше не имеет implicit `.default`;
+- `AppDelegate` стал явным production call site и передает `.default` для четырех user dictionaries;
+- `LayoutDetectorTests` больше не используют real `FileManager.default` для helper dictionaries и переходят на injected storage closures;
+- `SwiftSafetyRulesTests` получил guard `userDictionaryRequiresExplicitFileManagerBoundary`.
+
+**Ожидаемый эффект:** user dictionaries сохраняют прежнее production-поведение, но зависимость от файловой системы теперь видна в composition root. Тестовые dictionaries остаются fully deterministic и не трогают реальную файловую систему.
+
+**Статус:** verified. Targeted UserDictionaryTests + LayoutDetectorTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 97 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 371 tests / 47 suites.
+
+## Шаг 199. Explicit defaults/clock/ID boundary для `LearningCache`
+
+**Наблюдение:** `LearningCache` уже был value type и хранил dependencies как injected properties, но initializer всё еще имел production defaults: `UserDefaults = .standard`, `Date.init` и `UUID.init`. Поэтому cache можно было создать с live persistence/time/ID generation вне composition root.
+
+**Изменения:**
+- initializer `LearningCache(defaults:now:makeEntryID:)` теперь требует explicit `UserDefaults`, clock и ID factory;
+- `AppDelegate` стал явным production call site и передает `.standard`, `Date.init`, `UUID.init`;
+- `LearningCacheTests` получили deterministic helper `makeCache(...)` без live clock/random UUID defaults;
+- `SwiftSafetyRulesTests` получил guard `learningCacheRequiresExplicitDefaultsClockAndIDFactory`.
+
+**Ожидаемый эффект:** cache сохраняет прежнее production-поведение, но persistence/time/ID side effects теперь видны в composition root. Тесты остаются deterministic, а случайный возврат implicit production defaults будет пойман safety-suite.
+
+**Статус:** verified. Targeted LearningCacheTests + AppDelegateTests + TypingPipelineTests + HotkeyCoordinatorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 112 tests / 5 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 372 tests / 47 suites.
+
+## Шаг 200. Explicit `PipelineTunables` boundary для pipeline/retype dispatch
+
+**Наблюдение:** `TypingPipeline` и `RetypeDispatcher` уже получали большинство collaborators через initializer, но `PipelineTunables = .default` оставался implicit domain-policy default. У `RetypeDispatcher` дополнительно сохранялся implicit live clock через `Date.init`. Это делало cooldown/sequence policy и timestamp source менее заметными на границе pipeline wiring.
+
+**Изменения:**
+- `TypingPipeline` теперь требует explicit `tunables`;
+- `RetypeDispatcher` теперь требует explicit `tunables` и `now`;
+- production `AppDelegate` уже передавал `.default`, поэтому runtime wiring не изменился;
+- `TypingPipelineTests` явно передают `.default` в локальных fixtures;
+- `SwiftSafetyRulesTests` получил guard `pipelineTunablesStayExplicitAtPipelineBoundaries`.
+
+**Ожидаемый эффект:** pipeline policy остается прежней, но ее больше нельзя неявно получить из initializer default. Clock для dispatch timestamps также остается явной dependency, что лучше соответствует Swift 6 testability/DI rules.
+
+**Статус:** verified. Targeted TypingPipelineTests + HotkeyCoordinatorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 103 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 373 tests / 47 suites.
+
+## Шаг 201. Explicit `DetectionThresholds` boundary для `LayoutDetector`
+
+**Наблюдение:** после подключения sensitivity через `decide(..., thresholds:)` сам detector все еще мог создаваться с implicit `DetectionThresholds = .default`. Это оставляло policy fallback скрытым внутри initializer/factory, хотя по правилам проекта domain policy должна быть видна на wiring boundary.
+
+**Изменения:**
+- `LayoutDetector.init(...)` теперь требует explicit `thresholds`;
+- `LayoutDetector.defaultMultilingual(...)` теперь требует explicit `thresholds`;
+- production `AppDelegate` явно передает `.default` при создании detector;
+- detector/pipeline fixtures в тестах явно передают `.default`;
+- `SwiftSafetyRulesTests` получил guard `layoutDetectorThresholdsStayExplicitAtConstructionBoundaries`.
+
+**Ожидаемый эффект:** runtime-поведение остается прежним, но threshold policy больше нельзя получить неявно при construction. Это делает fallback-конфигурацию detector такой же явной, как pipeline tunables и clock dependencies в предыдущем шаге.
+
+**Статус:** verified. Targeted LayoutDetectorTests + LayoutDetectorSmokeTests + LanguageScorerTests + TypingPipelineTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 136 tests / 5 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 374 tests / 47 suites.
+
+## Шаг 202. Explicit NaturalLanguage scorer policy
+
+**Наблюдение:** после явного `DetectionThresholds` на construction boundary у `LayoutDetector` оставался скрытый fallback ниже по цепочке: `NaturalLanguageScorer` сам брал `DetectionThresholds.default.naturalLanguageMinWordLength`, а `HybridLanguageScorer` мог неявно создать `NaturalLanguageScorer()`. Это делало часть sensitivity policy неявной внутри scoring layer.
+
+**Изменения:**
+- `NaturalLanguageScorer` теперь требует explicit `minimumTextLength` и `maximumHypotheses`;
+- `HybridLanguageScorer` теперь требует explicit `naturalLanguageScorer`;
+- `LayoutDetector.defaultMultilingual(...)` передает `minimumTextLength` из уже явного `thresholds.naturalLanguageMinWordLength`;
+- `LanguageScorerTests` обновлены под explicit scorer configuration;
+- `SwiftSafetyRulesTests` получил guard `naturalLanguageScorerPolicyStaysExplicit`.
+
+**Ожидаемый эффект:** natural-language tie-break продолжает работать как раньше, но scorer больше не может незаметно вернуться к глобальному `DetectionThresholds.default`. Вся threshold policy идет сверху: production/test wiring -> detector factory -> hybrid scorer -> natural-language scorer.
+
+**Статус:** verified. Targeted LanguageScorerTests + LayoutDetectorTests + LayoutDetectorSmokeTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 113 tests / 4 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 375 tests / 47 suites.
+
+## Шаг 203. Explicit clock boundary для `ManualActionsCoordinator`
+
+**Наблюдение:** `TypingPipeline` уже получает injected `now` и передает его в manual-action flow, но сам `ManualActionsCoordinator` все еще имел fallback `now: Date.init` в initializer. Для manual hotkey actions это скрытая wall-clock dependency: sentence conversion использует время для ограничения возраста committed words.
+
+**Изменения:**
+- `ManualActionsCoordinator.init(...)` теперь требует explicit `now`;
+- `TypingPipeline` продолжает передавать свой injected clock без изменения runtime-поведения;
+- `SwiftSafetyRulesTests` получил guard `manualActionsCoordinatorRequiresExplicitClock`.
+
+**Ожидаемый эффект:** manual retype / convert-last-sentence flows используют тот же clock boundary, что и pipeline. Возврат к implicit wall-clock fallback будет пойман safety-suite.
+
+**Статус:** verified. Targeted TypingPipelineTests + HotkeyCoordinatorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 106 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 376 tests / 47 suites.
+
+## Шаг 204. Explicit notification-center boundary для `NotificationManager`
+
+**Наблюдение:** `NotificationManager` уже поддерживал полностью injectable closure-based initializer, но convenience initializer все еще имел implicit production fallback `UNUserNotificationCenter = .current()`. Это оставляло системный notification center скрытой dependency внутри service boundary вместо явного wiring на уровне app composition.
+
+**Изменения:**
+- `NotificationManager(notificationCenter:makeNotificationID:)` теперь требует explicit `notificationCenter`;
+- production `AppDelegate` явно передает `.current()`;
+- closure-based initializer для тестов не изменился;
+- `SwiftSafetyRulesTests` усилил guard `notificationManagerDoesNotAccessCurrentNotificationCenterDirectly`.
+
+**Ожидаемый эффект:** runtime-поведение уведомлений не меняется, но системный `UNUserNotificationCenter` теперь подключается только на production boundary. Возврат implicit `.current()` в `NotificationManager` будет пойман safety-suite.
+
+**Статус:** verified. Targeted NotificationManagerTests + AppDelegateTests + SwiftSafetyRulesTests: first run caught missing `UserNotifications` import; re-run `** TEST SUCCEEDED **`, 80 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 376 tests / 47 suites.
+
+## Шаг 205. Explicit notification id factory для `NotificationManager`
+
+**Наблюдение:** после вынесения `UNUserNotificationCenter.current()` на production boundary в `NotificationManager` оставался второй скрытый runtime default: `makeNotificationID` мог неявно использовать `UUID().uuidString`. Для уведомлений это корректное production-поведение, но сама случайность является side effect и должна быть явно подключена на уровне app composition.
+
+**Изменения:**
+- `NotificationManager(notificationCenter:makeNotificationID:)` теперь требует explicit `makeNotificationID`;
+- production `AppDelegate` явно передает `{ UUID().uuidString }`;
+- deterministic closure-based tests не меняют поведение;
+- `SwiftSafetyRulesTests` усилил guard против возврата implicit UUID fallback в `NotificationManager`.
+
+**Ожидаемый эффект:** runtime-уведомления продолжают получать уникальные id, но source of randomness больше не спрятан внутри service initializer. Тестовая детерминированность и DI-boundary стали жестче.
+
+**Статус:** verified. Targeted NotificationManagerTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 80 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 376 tests / 47 suites.
+
+## Шаг 206. Explicit notification sound policy для `NotificationManager`
+
+**Наблюдение:** после явного `notificationCenter` и `makeNotificationID` в `NotificationManager` оставался еще один скрытый production default: `content.sound = .default`. Это не ломало тесты, но смешивало assembly policy с логикой подготовки уведомления.
+
+**Изменения:**
+- `NotificationManager` получил explicit `notificationSound`;
+- production `AppDelegate` явно передает `.default`;
+- создание `UNMutableNotificationContent` использует injected sound policy;
+- `SwiftSafetyRulesTests` запрещает возврат прямого `content.sound = .default` внутри `NotificationManager`.
+
+**Ожидаемый эффект:** поведение для пользователя не меняется: уведомления по-прежнему имеют системный звук. При этом UI/OS policy теперь находится на production boundary, а сервис остается детерминированнее и прозрачнее для тестов.
+
+**Статус:** verified. Targeted NotificationManagerTests + AppDelegateTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 80 tests / 3 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 376 tests / 47 suites.
+
+## Шаг 207. Fail-fast isolated `UserDefaults` в тестах
+
+**Наблюдение:** несколько тестовых fixtures создавали isolated `UserDefaults(suiteName:)`, но при `nil` fallback уходил в `UserDefaults.standard`. Это редкий, но неприятный риск: при проблеме с suite creation тесты могли незаметно писать в реальные пользовательские defaults и давать загрязненное состояние между прогонами.
+
+**Изменения:**
+- `ExclusionListTests`, `PerAppLayoutPreferencesTests`, `HotkeyRegistryTests`, `HotkeyCoordinatorTests` и `TypingPipelineTests` теперь используют `try #require(UserDefaults(suiteName: ...))`;
+- тесты и fixtures, которым нужны isolated defaults, переведены на `throws`;
+- fallback на `.standard` / `UserDefaults.standard` удален из этих suites;
+- `SwiftSafetyRulesTests` получил guard `unitTestsDoNotFallbackToStandardUserDefaultsForIsolatedSuites`.
+
+**Ожидаемый эффект:** если isolated defaults suite не создается, тест падает явно и рано. Тесты больше не могут тихо использовать реальные app/user defaults, а safety-suite удерживает это правило.
+
+**Статус:** verified. Targeted ExclusionListTests + PerAppLayoutPreferencesTests + HotkeyRegistryTests + HotkeyCoordinatorTests + TypingPipelineTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 136 tests / 6 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 377 tests / 47 suites.
+
+## Шаг 208. Fail-fast isolated `UserDefaults` для `RecentSwitchesTests`
+
+**Наблюдение:** после шага 207 один test suite все еще сохранял fallback `UserDefaults(suiteName:) ?? .standard`: `RecentSwitchesTests`. Это оставляло тот же риск, что и в предыдущем шаге: при проблеме с созданием isolated suite тест мог незаметно использовать реальные defaults.
+
+**Изменения:**
+- `RecentSwitchesTests.makeDefaults(...)` теперь использует `try #require(UserDefaults(suiteName: ...))`;
+- тесты `RecentSwitchesTests`, которым нужен isolated storage, переведены на `throws`;
+- fallback на `.standard` удален из suite;
+- guard `unitTestsDoNotFallbackToStandardUserDefaultsForIsolatedSuites` теперь покрывает `RecentSwitchesTests.swift`.
+
+**Ожидаемый эффект:** тесты истории переключений больше не могут тихо писать в реальные defaults пользователя. Если isolated suite не создается, failure будет явным и локализованным.
+
+**Статус:** verified. Targeted RecentSwitchesTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 82 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 377 tests / 47 suites.
+
+## Шаг 209. Fail-fast isolated `UserDefaults` для `LearningCacheTests` и `AppStateTests`
+
+**Наблюдение:** после закрытия fallback на `.standard` остались тестовые fixtures, где `UserDefaults(suiteName:)` обрабатывался через `Issue.record(...)` и ранний `return`. Такой тест не использовал реальные defaults, но мог завершиться как пропущенная логика вместо явного failure при проблеме с isolated suite.
+
+**Изменения:**
+- `LearningCacheTests.makeDefaults(...)` теперь возвращает `throws -> UserDefaults` и использует `try #require(UserDefaults(suiteName: ...))`;
+- тесты `LearningCacheTests`, которым нужен isolated storage, переведены на `throws`;
+- `AppStateTests.makeDefaults(...)` переведен на тот же fail-fast pattern;
+- persistence-тесты `AppStateTests` переиспользуют общий helper вместо ручного `guard let UserDefaults(suiteName:)`.
+
+**Ожидаемый эффект:** тесты learning cache и app state больше не могут тихо выйти из сценария при проблеме с isolated defaults. Ошибка создания suite станет явной, ранней и одинаковой с остальными тестами проекта.
+
+**Статус:** verified. Targeted LearningCacheTests + AppStateTests: `** TEST SUCCEEDED **`, 13 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 377 tests / 47 suites.
+
+## Шаг 210. Safety guard для fail-fast isolated `UserDefaults` в тестах
+
+**Наблюдение:** шаги 207-209 привели test fixtures с isolated `UserDefaults(suiteName:)` к единому fail-fast pattern через `try #require(...)`. Но safety-suite пока защищал только fallback на `.standard` и не запрещал более мягкий вариант `Issue.record(...)` + ранний `return`.
+
+**Изменения:**
+- guard `unitTestsDoNotFallbackToStandardUserDefaultsForIsolatedSuites` расширен на `AppStateTests.swift` и `LearningCacheTests.swift`;
+- добавлен guard `unitTestsFailFastWhenIsolatedUserDefaultsSuitesCannotBeCreated`;
+- scanner проверяет test suites с `UserDefaults(suiteName:)` и запрещает возврат к `Issue.record(...)` / `guard let` для создания isolated defaults;
+- правило продолжает игнорировать comments/strings через существующий sanitizer.
+
+**Ожидаемый эффект:** будущие тесты больше не смогут тихо пропускать сценарий при проблеме с isolated defaults. Для всех suites с `UserDefaults(suiteName:)` закреплен единый стиль: `try #require(...)` и явный test failure.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 75 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 378 tests / 47 suites.
+
+## Шаг 211. Injected file enumeration для `LocalizationCatalogTests`
+
+**Наблюдение:** после серии DI-правок в runtime-коде и test defaults остался test-only singleton usage: `LocalizationCatalogTests` напрямую использовал `FileManager.default.enumerator(...)` для поиска Swift-файлов приложения. Это не влияло на runtime, но выбивалось из общего правила проекта: side effects должны быть явными dependency boundaries.
+
+**Изменения:**
+- `LocalizationCatalogTests.swiftFiles(...)` теперь принимает injected `FileEnumerator` closure;
+- production-style test path передает `Self.enumerateFiles`, где создается локальный `FileManager()` instance без обращения к singleton `FileManager.default`;
+- логика проверки localization keys не изменилась;
+- `SwiftSafetyRulesTests` получил guard `localizationCatalogTestsKeepFileEnumerationInjected`, запрещающий возврат `FileManager.default` в `LocalizationCatalogTests.swift`.
+
+**Ожидаемый эффект:** localization tests сохраняют прежнее покрытие, но file-system side effect становится явной test dependency. Будущий возврат к прямому singleton access будет пойман safety-suite.
+
+**Статус:** verified. Targeted LocalizationCatalogTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 80 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 379 tests / 47 suites.
+
+## Шаг 212. Injected file enumeration для `SwiftSafetyRulesTests`
+
+**Наблюдение:** после шага 211 прямое использование `FileManager.default.enumerator(...)` осталось уже не в application tests, а в самом `SwiftSafetyRulesTests`. Это не влияло на runtime, но safety-suite является главным хранителем правил проекта, поэтому ему особенно важно не нарушать собственный DI-style.
+
+**Изменения:**
+- `SwiftSafetyRulesTests.swiftFiles(in:)` теперь делегирует работу overload-у с injected `FileEnumerator`;
+- production-style test path использует `Self.enumerateFiles`, где создается локальный `FileManager()` instance без обращения к singleton `FileManager.default`;
+- существующие call sites `swiftFiles(in:)` сохранены без изменения;
+- добавлен self-guard `swiftSafetyRulesTestsKeepFileEnumerationInjected`, который проверяет sanitized source самого safety-suite.
+
+**Ожидаемый эффект:** project scanner остается функционально тем же, но filesystem enumeration в safety-suite оформлена как явная dependency boundary. Будущий возврат к `FileManager.default` в исполняемом коде `SwiftSafetyRulesTests` будет пойман самим safety-suite.
+
+**Статус:** verified. Targeted SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 77 tests / 1 suite. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 380 tests / 47 suites.
+
+## Шаг 213. Deterministic suite names для isolated `UserDefaults` в тестах
+
+**Наблюдение:** после fail-fast `UserDefaults` cleanup остались isolated defaults suites, где имя suite строилось через `UUID().uuidString`. Это не влияло на пользователя, но добавляло лишнюю случайность в unit tests. Общий random scanner не видел этот случай, потому что `UUID().uuidString` находился внутри string interpolation и удалялся sanitizer-ом вместе со string literal.
+
+**Изменения:**
+- `ExclusionListTests.makeDefaults(...)` и `PerAppLayoutPreferencesTests.makeDefaults(...)` перешли на deterministic suite name через `#function`;
+- `HotkeyCoordinatorTests.makeFixture(...)` получает deterministic `testName: String = #function` и очищает persistent domain перед использованием;
+- `TypingPipelineTests` получил общий helper `makeDefaults(_:)` и больше не создает suite names через `UUID().uuidString`;
+- `SwiftSafetyRulesTests.unitTestsDoNotUseRandomAPIs` теперь дополнительно проверяет raw source на `UserDefaults(suiteName:)` + `UUID().uuidString`, чтобы interpolation-сценарий не обходил sanitizer.
+
+**Ожидаемый эффект:** isolated defaults остаются разнесенными по тестам, но больше не зависят от random identifiers. Поведение тестов становится более воспроизводимым, а safety-suite ловит возврат случайных suite names.
+
+**Статус:** verified. Targeted ExclusionListTests + PerAppLayoutPreferencesTests + HotkeyCoordinatorTests + TypingPipelineTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 126 tests / 5 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 380 tests / 47 suites.
+
+## Шаг 214. Explicit ID factory для `RecentSwitchEntry`
+
+**Наблюдение:** `RecentSwitchEntry` оставался доменной value-моделью с hidden side effect: initializer по умолчанию генерировал `id: UUID = UUID()`. Это удобно для call sites, но противоречит текущей DI-дисциплине проекта: random identifiers должны подключаться явно на composition boundary, а тесты должны использовать deterministic values.
+
+**Изменения:**
+- `RecentSwitchEntry` больше не имеет default `UUID()` в initializer-е;
+- `RecentSwitches` получил injected `makeEntryID: @MainActor () -> UUID`;
+- runtime `AppDelegate` явно передает `UUID.init` при создании `RecentSwitches`;
+- `HotkeyCoordinator` и `RetypeDispatcher` теперь записывают recent entries через `RecentSwitches.record(...)`, где ID создается injected factory;
+- тесты `RecentSwitchesTests`, `HistoryTabTests`, `TypingPipelineTests` и `HotkeyCoordinatorTests` используют deterministic fixed UUID helper;
+- `SwiftSafetyRulesTests` получил guard `recentSwitchesRequiresExplicitEntryIDFactory`, запрещающий возврат `UUID()` внутрь `RecentSwitches.swift`.
+
+**Ожидаемый эффект:** recent-history сохраняет прежнее runtime-поведение, но генерация ID стала явной зависимостью. Тесты больше не зависят от случайных UUID, а будущий откат к hidden random default будет пойман safety-suite.
+
+**Статус:** verified. Targeted RecentSwitchesTests + HistoryTabTests + TypingPipelineTests + HotkeyCoordinatorTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 121 tests / 5 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 381 tests / 47 suites.
+
+## Шаг 215. Declarative assertions в `SmartPasteTests`
+
+**Наблюдение:** часть `SmartPasteTests` проверяла успешный `.pasted` результат через ручной `if case ... else { Issue.record(...) }`. Это рабочий Swift Testing паттерн, но в данном файле результат уже можно выразить декларативно через `#expect`: отдельно проверить, что case действительно `.pasted`, и отдельно проверить распознанный `LanguageID`.
+
+**Изменения:**
+- сценарии русского, английского, украинского и румынского clipboard больше не используют `Issue.record(...)`;
+- вместо ручного failure branch тесты выставляют локальные `isPasted` / `pastedLanguage` и проверяют их через `#expect`;
+- `SwiftSafetyRulesTests` получил guard `smartPasteTestsUseExpectInsteadOfIssueRecord`, запрещающий возврат `Issue.record` в `SmartPasteTests.swift`.
+
+**Ожидаемый эффект:** `SmartPasteTests` становятся ближе к единому стилю Swift Testing в проекте: основной verdict выражен через `#expect`, а не через ручную запись issue. Поведение тестируемого `SmartPaste` не меняется.
+
+**Статус:** verified. Targeted SmartPasteTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 87 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 382 tests / 47 suites.
+
+## Шаг 216. Declarative assertions в `SelectionConverterTests`
+
+**Наблюдение:** `SelectionConverterTests` все еще использовал ручные `Issue.record(...)` ветки для expected `.success` / `.failure` cases. Это не ломало suite, но делало проверки менее единообразными: часть verdict-а была выражена не через `#expect`, а через imperative failure path с ранним `return`.
+
+**Изменения:**
+- success-сценарии clipboard fallback теперь выставляют `isSuccess` и `isClipboardMethod`, затем проверяют их через `#expect`;
+- failure-сценарии `.noSelection`, `.tooLong` и `.conversionFailed` проверяются через boolean verdict + `#expect`;
+- `SwiftSafetyRulesTests` получил guard `selectionConverterTestsUseExpectInsteadOfIssueRecord`, запрещающий возврат `Issue.record` в `SelectionConverterTests.swift`.
+
+**Ожидаемый эффект:** тесты selection conversion становятся ближе к единому Swift Testing стилю проекта. Поведение `SelectionConverter` не меняется, но future regressions в expected result shape будут выражаться через стандартные assertions.
+
+**Статус:** verified. Targeted SelectionConverterTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 85 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 383 tests / 47 suites.
+
+## Шаг 217. Fail-fast section lookup в `HelpContentTests`
+
+**Наблюдение:** `HelpContentTests` проверял наличие privacy section через `guard` + `Issue.record(...)` + early return. Для Swift Testing это менее точная форма, чем `try #require(...)`: missing fixture должен сразу помечать prerequisite failure и не продолжать dependent assertions.
+
+**Изменения:**
+- `privacySectionContainsKeyPhrases` теперь объявлен как `throws`;
+- поиск privacy section переведен на `try #require(...)`;
+- `SwiftSafetyRulesTests` получил guard `helpContentTestsUseRequireInsteadOfIssueRecord`, запрещающий возврат `Issue.record` в `HelpContentTests.swift`.
+
+**Ожидаемый эффект:** тест явно отделяет prerequisite от содержательных `#expect` проверок текста. Если секция пропадет, failure станет короче и понятнее, без ручного imperative branch.
+
+**Статус:** verified. Targeted HelpContentTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 85 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 384 tests / 47 suites.
+
+## Шаг 218. Fail-fast rank lookup в `LanguageScorerTests`
+
+**Наблюдение:** `LanguageScorerTests` проверял наличие entries в `LayoutDetector.tieBreakRank` через `guard` + `Issue.record(...)` + early return. Это снова prerequisite-проверка, для которой Swift Testing дает более точный инструмент `try #require(...)`.
+
+**Изменения:**
+- `tieBreakRankPrefersCyrillicThenRomanianThenEnglish` теперь объявлен как `throws`;
+- lookup значений `.ru`, `.uk`, `.ro`, `.en` переведен на отдельные `try #require(...)`;
+- `SwiftSafetyRulesTests` получил guard `languageScorerTestsUseRequireInsteadOfIssueRecord`, запрещающий возврат `Issue.record` в `LanguageScorerTests.swift`.
+
+**Ожидаемый эффект:** если таблица tie-break priority случайно потеряет язык, тест упадет как явный missing prerequisite, а не через ручную issue-запись и ранний выход. Основные ordering assertions остаются прежними.
+
+**Статус:** verified. Targeted LanguageScorerTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 90 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 385 tests / 47 suites.
+
+## Шаг 219. Fail-fast localization key lookup в `LocalizationCatalogTests`
+
+**Наблюдение:** `LocalizationCatalogTests` проверял наличие hotkey localization keys через `guard` + `Issue.record(...)` + `continue`. Для обязательных ключей это менее строгая форма: если ключ отсутствует, тест должен сразу зафиксировать missing prerequisite, а не продолжать цикл с частичным verdict.
+
+**Изменения:**
+- lookup hotkey localization entries переведен на `try #require(catalog.strings[key])`;
+- ручной `Issue.record(...)` и `continue` удалены из `hotkeyActionKeysAreTranslatedForSupportedLanguages`;
+- `SwiftSafetyRulesTests` получил guard `localizationCatalogTestsUseRequireInsteadOfIssueRecord`, запрещающий возврат `Issue.record` в `LocalizationCatalogTests.swift`.
+
+**Ожидаемый эффект:** отсутствие обязательного localization key теперь падает как явная prerequisite-ошибка Swift Testing. Проверки переводов для найденного entry остаются прежними: `translated`, non-empty value и value не равен raw key.
+
+**Статус:** verified. Targeted LocalizationCatalogTests + SwiftSafetyRulesTests: `** TEST SUCCEEDED **`, 87 tests / 2 suites. Build: `** BUILD SUCCEEDED **`. Full suite: `** TEST SUCCEEDED **`, 386 tests / 47 suites.

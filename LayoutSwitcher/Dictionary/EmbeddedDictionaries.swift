@@ -1,22 +1,40 @@
 import Foundation
 
 enum EmbeddedDictionaries {
+    private static let englishCache = InMemoryDictionary(language: .en, words: en)
+    private static let russianCache = InMemoryDictionary(language: .ru, words: ru)
+    private static let ukrainianCache = InMemoryDictionary(language: .uk, words: uk)
+    private static let romanianCache = InMemoryDictionary(language: .ro, words: ro)
+
     static func english() -> InMemoryDictionary {
-        InMemoryDictionary(language: .en, words: en)
+        englishCache
     }
 
     static func russian() -> InMemoryDictionary {
-        InMemoryDictionary(language: .ru, words: ru)
+        russianCache
     }
 
     static func ukrainian() -> InMemoryDictionary {
-        InMemoryDictionary(language: .uk, words: uk)
+        ukrainianCache
     }
 
     static func romanian() -> InMemoryDictionary {
-        InMemoryDictionary(language: .ro, words: ro)
+        romanianCache
     }
 
+    /// Returns raw lookup words before dictionary normalization.
+    static func rawWords(for language: LanguageID) -> [String] {
+        switch language {
+        case .en:
+            return en
+        case .ru:
+            return ru
+        case .uk:
+            return uk
+        case .ro:
+            return ro
+        }
+    }
 
     /// Stable frequency-based ngram-training corpus for English.
     /// Detached from `en` lookup dict so dict growth doesn't shift bigram statistics.

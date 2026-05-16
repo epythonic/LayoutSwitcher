@@ -16,28 +16,45 @@ final class UserDictionary: WordDictionary {
     private let readData: @MainActor (URL) throws -> Data
     private let writeData: @MainActor (Data, URL) throws -> Void
 
-    init(
+    /// Creates a user dictionary backed by the provided file manager.
+    convenience init(
         language: LanguageID,
         storageURL: URL? = nil,
-        storageURLProvider: @escaping @MainActor (LanguageID) -> URL = UserDictionary.fileURL(for:),
-        createDirectory: @escaping @MainActor (URL) throws -> Void = { url in
-            try FileManager.default.createDirectory(
-                at: url,
-                withIntermediateDirectories: true
-            )
-        },
-        fileExists: @escaping @MainActor (String) -> Bool = { path in
-            FileManager.default.fileExists(atPath: path)
-        },
-        readData: @escaping @MainActor (URL) throws -> Data = { url in
-            try Data(contentsOf: url)
-        },
-        writeData: @escaping @MainActor (Data, URL) throws -> Void = { data, url in
-            try data.write(to: url, options: .atomic)
-        }
+        fileManager: FileManager
+    ) {
+        let resolvedStorageURL = storageURL ?? Self.fileURL(for: language, fileManager: fileManager)
+        self.init(
+            language: language,
+            storageURL: resolvedStorageURL,
+            createDirectory: { url in
+                try fileManager.createDirectory(
+                    at: url,
+                    withIntermediateDirectories: true
+                )
+            },
+            fileExists: { path in
+                fileManager.fileExists(atPath: path)
+            },
+            readData: { url in
+                try Data(contentsOf: url)
+            },
+            writeData: { data, url in
+                try data.write(to: url, options: .atomic)
+            }
+        )
+    }
+
+    /// Creates a user dictionary with injectable storage closures for deterministic tests.
+    init(
+        language: LanguageID,
+        storageURL: URL,
+        createDirectory: @escaping @MainActor (URL) throws -> Void,
+        fileExists: @escaping @MainActor (String) -> Bool,
+        readData: @escaping @MainActor (URL) throws -> Data,
+        writeData: @escaping @MainActor (Data, URL) throws -> Void
     ) {
         self.language = language
-        self.storageURL = storageURL ?? storageURLProvider(language)
+        self.storageURL = storageURL
         self.createDirectory = createDirectory
         self.fileExists = fileExists
         self.readData = readData
@@ -107,8 +124,8 @@ final class UserDictionary: WordDictionary {
         }
     }
 
-    private static func fileURL(for language: LanguageID) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    private static func fileURL(for language: LanguageID, fileManager: FileManager) -> URL {
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return appSupport
             .appendingPathComponent("LayoutSwitcher", isDirectory: true)

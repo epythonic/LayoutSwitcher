@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct AccessibilityPermissionTests {
     @Test func initReadsInjectedTrustState() {
-        let permission = AccessibilityPermission(
+        let permission = makePermission(
             trustStatusProvider: { true }
         )
 
@@ -13,83 +13,132 @@ struct AccessibilityPermissionTests {
     }
 
     @Test func refreshCallsGrantCallbackWhenTrustChangesToTrue() {
-        var trusted = false
-        var grantCount = 0
-        let permission = AccessibilityPermission(
-            trustStatusProvider: { trusted }
+        let state = TestState()
+        let permission = makePermission(
+            trustStatusProvider: { state.trusted }
         )
         permission.onTrustGranted = {
-            grantCount += 1
+            state.grantCount += 1
         }
 
-        trusted = true
+        state.trusted = true
         permission.refresh()
         permission.refresh()
 
         #expect(permission.isTrusted)
-        #expect(grantCount == 1)
+        #expect(state.grantCount == 1)
     }
 
     @Test func promptUsesInjectedRequesterThenRefreshes() {
-        var trusted = false
-        var promptCount = 0
-        let permission = AccessibilityPermission(
-            trustStatusProvider: { trusted },
+        let state = TestState()
+        let permission = makePermission(
+            trustStatusProvider: { state.trusted },
             trustPromptRequester: {
-                promptCount += 1
-                trusted = true
+                state.promptCount += 1
+                state.trusted = true
             }
         )
 
         permission.promptForTrust()
 
-        #expect(promptCount == 1)
+        #expect(state.promptCount == 1)
         #expect(permission.isTrusted)
     }
 
     @Test func openSystemSettingsUsesInjectedOpener() {
-        var openedURL: URL?
-        let permission = AccessibilityPermission(
+        let state = TestState()
+        let permission = makePermission(
             trustStatusProvider: { false },
             systemSettingsOpener: { url in
-                openedURL = url
+                state.openedURL = url
             }
         )
 
         permission.openSystemSettings()
 
-        #expect(openedURL?.absoluteString == "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        #expect(state.openedURL?.absoluteString == "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
     }
 
     @Test func pollingUsesInjectedTimerFactoryAndStopsToken() {
-        var trusted = false
-        var factoryCallCount = 0
-        var grantCount = 0
-        var tick: (@MainActor () -> Void)?
+        let state = TestState()
         let token = FakePollToken()
-        let permission = AccessibilityPermission(
-            trustStatusProvider: { trusted },
-            pollingTimerFactory: { refresh in
-                factoryCallCount += 1
-                tick = refresh
+        let permission = makePermission(
+            trustStatusProvider: { state.trusted },
+            pollingTimerFactory: { interval, refresh in
+                state.pollingIntervals.append(interval)
+                state.factoryCallCount += 1
+                state.tick = refresh
                 return token
             }
         )
         permission.onTrustGranted = {
-            grantCount += 1
+            state.grantCount += 1
         }
 
         permission.startPolling()
         permission.startPolling()
-        trusted = true
-        tick?()
+        state.trusted = true
+        state.tick?()
         permission.stopPolling()
         permission.stopPolling()
 
-        #expect(factoryCallCount == 1)
+        #expect(state.factoryCallCount == 1)
+        #expect(state.pollingIntervals == [1.0])
         #expect(permission.isTrusted)
-        #expect(grantCount == 1)
+        #expect(state.grantCount == 1)
         #expect(token.invalidateCount == 1)
+    }
+
+    @Test func startAfterStopCreatesNewPollingTokenWithInjectedInterval() {
+        let state = TestState()
+        let firstToken = FakePollToken()
+        let secondToken = FakePollToken()
+        let permission = makePermission(
+            pollingInterval: 0.25,
+            trustStatusProvider: { false },
+            pollingTimerFactory: { interval, _ in
+                state.factoryCallCount += 1
+                state.pollingIntervals.append(interval)
+                return state.factoryCallCount == 1 ? firstToken : secondToken
+            }
+        )
+
+        permission.startPolling()
+        permission.stopPolling()
+        permission.startPolling()
+        permission.stopPolling()
+
+        #expect(state.factoryCallCount == 2)
+        #expect(state.pollingIntervals == [0.25, 0.25])
+        #expect(firstToken.invalidateCount == 1)
+        #expect(secondToken.invalidateCount == 1)
+    }
+
+    private func makePermission(
+        pollingInterval: TimeInterval = 1.0,
+        trustStatusProvider: @escaping AccessibilityPermission.TrustStatusProvider = { false },
+        trustPromptRequester: @escaping AccessibilityPermission.TrustPromptRequester = {},
+        systemSettingsOpener: @escaping AccessibilityPermission.SystemSettingsOpener = { _ in },
+        pollingTimerFactory: @escaping AccessibilityPermission.PollingTimerFactory = { _, _ in FakePollToken() }
+    ) -> AccessibilityPermission {
+        AccessibilityPermission(
+            pollingInterval: pollingInterval,
+            trustStatusProvider: trustStatusProvider,
+            trustPromptRequester: trustPromptRequester,
+            systemSettingsOpener: systemSettingsOpener,
+            pollingTimerFactory: pollingTimerFactory
+        )
+    }
+
+    @MainActor
+    private final class TestState {
+        var trusted = false
+        var grantCount = 0
+        var promptCount = 0
+        var factoryCallCount = 0
+        var pollingIntervals: [TimeInterval] = []
+        var openedURL: URL?
+        var tick: (@MainActor () -> Void)?
     }
 
     @MainActor

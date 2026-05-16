@@ -4,14 +4,19 @@ import SwiftUI
 /// Owns first-run setup window lifecycle.
 @MainActor
 final class OnboardingWindowController: NSObject {
+    /// Lazily created singleton onboarding window.
     private var window: NSWindow?
+    /// Accessibility permission model displayed in onboarding.
     private let permission: AccessibilityPermission
+    /// Input-source manager displayed in onboarding checks.
     private let inputSources: InputSourceManager
+    /// Hotkey registry configured from onboarding.
     private let hotkeyRegistry: HotkeyRegistry
 
+    /// Completion callback fired after successful onboarding.
     private let onFinish: () -> Void
 
-    /// Creates controller bound to shared accessibility permission monitor.
+    /// Creates a controller bound to shared onboarding dependencies.
     init(permission: AccessibilityPermission, inputSources: InputSourceManager, hotkeyRegistry: HotkeyRegistry, onFinish: @escaping () -> Void) {
         self.permission = permission
         self.inputSources = inputSources

@@ -7,13 +7,16 @@ import Foundation
 extension LayoutDetector {
     /// Build a default EN/RU/UK/RO detector backed by the system spell-check dictionaries.
     /// Embedded word lists are kept as a final fallback for unit tests / offline use.
-    static func defaultMultilingual() -> LayoutDetector {
+    static func defaultMultilingual(
+        systemSpellChecker: any SpellChecking,
+        thresholds: DetectionThresholds
+    ) -> LayoutDetector {
         let mapping = RuEnQwertyMapping()
         let langs: [LanguageID] = [.en, .ru, .uk, .ro]
         var dicts: [LanguageID: any WordDictionary] = [:]
         for lang in langs {
             dicts[lang] = CompositeDictionary(language: lang, parts: [
-                SystemSpellCheckerDictionary(language: lang),
+                SystemSpellCheckerDictionary(language: lang, checker: systemSpellChecker),
                 Self.embeddedFallback(for: lang)
             ])
         }
@@ -27,8 +30,20 @@ extension LayoutDetector {
             mapping: mapping,
             dictionaries: dicts,
             ngrams: ngrams,
-            languageScorer: HybridLanguageScorer(nGramScorer: NGramLanguageScorer(ngrams: ngrams)),
-            romanianDiacriticResolver: RomanianDiacriticResolver(words: EmbeddedDictionaries.romanian().allWords)
+            languageScorer: HybridLanguageScorer(
+                nGramScorer: NGramLanguageScorer(ngrams: ngrams),
+                naturalLanguageScorer: NaturalLanguageScorer(
+                    minimumTextLength: thresholds.naturalLanguageMinWordLength,
+                    maximumHypotheses: LanguageID.allCases.count
+                )
+            ),
+            romanianDiacriticResolver: RomanianDiacriticResolver(words: EmbeddedDictionaries.romanian().allWords),
+            russianYoResolver: RussianYoResolver(
+                words: Self.rawWords(for: .ru),
+                preferredPlainCorrections: RussianYoResolver.defaultPreferredPlainCorrections
+            ),
+            spellingSuggestionProvider: SystemSpellingSuggestionProvider(checker: systemSpellChecker),
+            thresholds: thresholds
         )
     }
 
@@ -37,7 +52,9 @@ extension LayoutDetector {
         userEnglish: UserDictionary,
         userRussian: UserDictionary,
         userUkrainian: UserDictionary,
-        userRomanian: UserDictionary
+        userRomanian: UserDictionary,
+        systemSpellChecker: any SpellChecking,
+        thresholds: DetectionThresholds
     ) -> LayoutDetector {
         let mapping = RuEnQwertyMapping()
         let userDicts: [LanguageID: UserDictionary] = [
@@ -50,7 +67,7 @@ extension LayoutDetector {
         for (lang, user) in userDicts {
             dicts[lang] = CompositeDictionary(language: lang, parts: [
                 user,
-                SystemSpellCheckerDictionary(language: lang),
+                SystemSpellCheckerDictionary(language: lang, checker: systemSpellChecker),
                 Self.embeddedFallback(for: lang)
             ])
         }
@@ -60,17 +77,31 @@ extension LayoutDetector {
             .uk: NGramModels.ukrainian(),
             .ro: NGramModels.romanian()
         ]
+        let romanianDiacriticResolverCache = RomanianDiacriticResolverCache()
+
         return LayoutDetector(
             mapping: mapping,
             dictionaries: dicts,
             ngrams: ngrams,
-            languageScorer: HybridLanguageScorer(nGramScorer: NGramLanguageScorer(ngrams: ngrams)),
+            languageScorer: HybridLanguageScorer(
+                nGramScorer: NGramLanguageScorer(ngrams: ngrams),
+                naturalLanguageScorer: NaturalLanguageScorer(
+                    minimumTextLength: thresholds.naturalLanguageMinWordLength,
+                    maximumHypotheses: LanguageID.allCases.count
+                )
+            ),
+            russianYoResolver: RussianYoResolver(
+                words: Self.rawWords(for: .ru),
+                preferredPlainCorrections: RussianYoResolver.defaultPreferredPlainCorrections
+            ),
             romanianDiacriticResolverProvider: {
-                RomanianDiacriticResolver(words: Array(EmbeddedDictionaries.romanian().allWords) + Array(userRomanian.words))
+                romanianDiacriticResolverCache.resolver(userWords: userRomanian.words)
             },
+            spellingSuggestionProvider: SystemSpellingSuggestionProvider(checker: systemSpellChecker),
             romanianPlainOverrideProvider: {
-                Set(userRomanian.words.filter { !RomanianDiacriticResolver.containsRomanianDiacritic($0) })
-            }
+                romanianDiacriticResolverCache.plainOverrides(userWords: userRomanian.words)
+            },
+            thresholds: thresholds
         )
     }
 
@@ -81,5 +112,10 @@ extension LayoutDetector {
     /// staging or stripped builds).
     static func embeddedFallback(for language: LanguageID) -> any WordDictionary {
         BundledDictionaryLoader.loadOrEmbedded(language: language)
+    }
+
+    /// Returns raw dictionary words for features that must preserve orthography.
+    static func rawWords(for language: LanguageID) -> Set<String> {
+        BundledDictionaryLoader.rawWordsOrEmbedded(language: language)
     }
 }

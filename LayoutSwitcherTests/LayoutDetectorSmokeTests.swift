@@ -22,7 +22,8 @@ struct LayoutDetectorSmokeTests {
             .uk: NGramModels.ukrainian(),
             .ro: NGramModels.romanian()
         ],
-        romanianDiacriticResolver: RomanianDiacriticResolver(words: EmbeddedDictionaries.romanian().allWords)
+        romanianDiacriticResolver: RomanianDiacriticResolver(words: EmbeddedDictionaries.romanian().allWords),
+        thresholds: .default
     )
 
     private func chars(_ keyCodes: [CGKeyCode]) -> [WordChar] {

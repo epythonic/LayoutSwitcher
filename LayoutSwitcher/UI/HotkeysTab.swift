@@ -2,10 +2,15 @@ import SwiftUI
 
 /// Configurable hotkey bindings presentation tab.
 struct HotkeysTab: View {
+    /// Registry that stores current hotkey bindings and persists updates.
     @Bindable var registry: HotkeyRegistry
+    /// Action currently being edited by the key recorder.
     @State private var editingAction: HotkeyAction?
+    /// Whether the hidden recorder view should consume the next keydown.
     @State private var isRecording = false
+    /// Action displaced by a newly chosen shortcut, if a conflict occurred.
     @State private var conflictedAction: HotkeyAction?
+    /// Controls presentation of the binding-conflict alert.
     @State private var isConflictAlertPresented = false
 
     /// Renders currently configured hotkeys and their semantics.
@@ -95,9 +100,13 @@ struct HotkeysTab: View {
 
     /// One rendered row in hotkeys list.
     private struct Row {
+        /// Hotkey action represented by this row.
         let action: HotkeyAction
+        /// Localized primary label.
         let title: String
+        /// Localized explanatory subtitle.
         let subtitle: String
+        /// Formatted shortcut text or dash when unbound.
         let shortcut: String
     }
 

@@ -5,12 +5,9 @@ import Testing
 
 @MainActor
 struct LearningCacheTests {
-    private static func makeDefaults(_ testName: String = #function) -> UserDefaults? {
+    private static func makeDefaults(_ testName: String = #function) throws -> UserDefaults {
         let suiteName = "LayoutSwitcherTests.LearningCache.\(testName)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            Issue.record("Could not create test UserDefaults suite")
-            return nil
-        }
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
@@ -32,13 +29,23 @@ struct LearningCacheTests {
             sourceLanguage: source,
             separator: .space,
             bundleID: bundleID,
-            timestamp: Date()
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }
 
-    @Test func recordsUndoAndSuppressesFutureMatch() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache = LearningCache(defaults: defaults)
+    private static func makeCache(
+        defaults: UserDefaults,
+        now: @escaping @MainActor () -> Date = { Date(timeIntervalSince1970: 1_700_000_100) },
+        makeEntryID: @escaping @MainActor () -> UUID = {
+            UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
+        }
+    ) -> LearningCache {
+        LearningCache(defaults: defaults, now: now, makeEntryID: makeEntryID)
+    }
+
+    @Test func recordsUndoAndSuppressesFutureMatch() throws {
+        let defaults = try Self.makeDefaults()
+        let cache = Self.makeCache(defaults: defaults)
         let record = Self.makeRecord()
 
         #expect(!cache.shouldSuppress(
@@ -60,9 +67,9 @@ struct LearningCacheTests {
         ))
     }
 
-    @Test func differentBundleIDDoesNotSuppress() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache = LearningCache(defaults: defaults)
+    @Test func differentBundleIDDoesNotSuppress() throws {
+        let defaults = try Self.makeDefaults()
+        let cache = Self.makeCache(defaults: defaults)
         cache.recordUndo(record: Self.makeRecord(bundleID: "com.test.app"))
 
         #expect(!cache.shouldSuppress(
@@ -74,9 +81,9 @@ struct LearningCacheTests {
         ))
     }
 
-    @Test func differentCorrectionDoesNotSuppress() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache = LearningCache(defaults: defaults)
+    @Test func differentCorrectionDoesNotSuppress() throws {
+        let defaults = try Self.makeDefaults()
+        let cache = Self.makeCache(defaults: defaults)
         cache.recordUndo(record: Self.makeRecord(corrected: "привет"))
 
         #expect(!cache.shouldSuppress(
@@ -88,12 +95,12 @@ struct LearningCacheTests {
         ))
     }
 
-    @Test func persistsAcrossInstances() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache1 = LearningCache(defaults: defaults)
+    @Test func persistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let cache1 = Self.makeCache(defaults: defaults)
         cache1.recordUndo(record: Self.makeRecord())
 
-        let cache2 = LearningCache(defaults: defaults)
+        let cache2 = Self.makeCache(defaults: defaults)
         #expect(cache2.shouldSuppress(
             original: "ghbdtn",
             corrected: "привет",
@@ -103,9 +110,9 @@ struct LearningCacheTests {
         ))
     }
 
-    @Test func nilBundleIDSuppressesOnlyForNil() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache = LearningCache(defaults: defaults)
+    @Test func nilBundleIDSuppressesOnlyForNil() throws {
+        let defaults = try Self.makeDefaults()
+        let cache = Self.makeCache(defaults: defaults)
         cache.recordUndo(record: Self.makeRecord(bundleID: nil))
 
         #expect(cache.shouldSuppress(
@@ -124,9 +131,9 @@ struct LearningCacheTests {
         ))
     }
 
-    @Test func allEntriesReflectsRecordedUndo() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache = LearningCache(defaults: defaults)
+    @Test func allEntriesReflectsRecordedUndo() throws {
+        let defaults = try Self.makeDefaults()
+        let cache = Self.makeCache(defaults: defaults)
         #expect(cache.allEntries().isEmpty)
 
         cache.recordUndo(record: Self.makeRecord())
@@ -136,9 +143,19 @@ struct LearningCacheTests {
         #expect(entries.first?.corrected == "привет")
     }
 
-    @Test func removeAtIndexRemovesEntry() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache = LearningCache(defaults: defaults)
+    @Test func allEntriesUsesInjectedIDFactory() throws {
+        let defaults = try Self.makeDefaults()
+        let expectedID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000123"))
+        let cache = Self.makeCache(defaults: defaults, makeEntryID: { expectedID })
+
+        cache.recordUndo(record: Self.makeRecord())
+
+        #expect(cache.allEntries().first?.id == expectedID)
+    }
+
+    @Test func removeAtIndexRemovesEntry() throws {
+        let defaults = try Self.makeDefaults()
+        let cache = Self.makeCache(defaults: defaults)
         cache.recordUndo(record: Self.makeRecord(original: "first", corrected: "первый"))
         cache.recordUndo(record: Self.makeRecord(original: "second", corrected: "второй"))
 
@@ -148,9 +165,9 @@ struct LearningCacheTests {
         #expect(entries.first?.original == "first")
     }
 
-    @Test func removeAllClearsEntries() {
-        guard let defaults = Self.makeDefaults() else { return }
-        let cache = LearningCache(defaults: defaults)
+    @Test func removeAllClearsEntries() throws {
+        let defaults = try Self.makeDefaults()
+        let cache = Self.makeCache(defaults: defaults)
         cache.recordUndo(record: Self.makeRecord())
 
         cache.removeAll()

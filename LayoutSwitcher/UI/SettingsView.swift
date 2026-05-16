@@ -4,19 +4,33 @@ import os
 
 /// Root preferences view grouping all settings tabs.
 struct SettingsView: View {
+    /// Shared application settings and runtime state.
     @Bindable var appState: AppState
+    /// Per-application exclusion list model.
     @Bindable var exclusions: ExclusionList
+    /// Usage statistics model rendered in the General tab.
     @Bindable var stats: UsageStats
+    /// User-maintained English dictionary.
     @Bindable var userEnglish: UserDictionary
+    /// User-maintained Russian dictionary.
     @Bindable var userRussian: UserDictionary
+    /// User-maintained Ukrainian dictionary.
     @Bindable var userUkrainian: UserDictionary
+    /// User-maintained Romanian dictionary.
     @Bindable var userRomanian: UserDictionary
+    /// Current and enabled system keyboard input sources.
     @Bindable var inputSources: InputSourceManager
+    /// Hotkey binding registry.
     @Bindable var hotkeys: HotkeyRegistry
+    /// Per-application preferred layout settings.
     @Bindable var perAppLayouts: PerAppLayoutPreferences
+    /// Recent automatic/manual correction history.
     @Bindable var recents: RecentSwitches
+    /// Learned corrections cache shown in the learning tab.
     let learningCache: LearningCache
+    /// Launch-at-login side-effect service used by the General tab.
     let launchAtLoginManager: LaunchAtLoginManager
+    /// Opens the help window from the settings toolbar.
     let openHelp: () -> Void
 
     /// Renders tabbed settings UI with a top toolbar exposing the help shortcut.
@@ -39,12 +53,13 @@ struct SettingsView: View {
         .frame(width: 820, height: 700)
     }
 
+    /// Tab container that wires each settings model into its dedicated pane.
     private var tabs: some View {
         TabView {
             GeneralTab(appState: appState, stats: stats, launchAtLoginManager: launchAtLoginManager)
                 .tabItem { Label(String(localized: "settings.tab.general"), systemImage: "gearshape") }
 
-            LayoutsTab(inputSources: inputSources)
+            LayoutsTab(appState: appState, inputSources: inputSources)
                 .tabItem { Label(String(localized: "settings.tab.layouts"), systemImage: "globe") }
 
             PerAppLayoutsTab(preferences: perAppLayouts, inputSources: inputSources)
@@ -73,8 +88,11 @@ struct SettingsView: View {
 
 /// General settings tab containing status, detector toggles, and statistics.
 private struct GeneralTab: View {
+    /// Shared application settings and runtime status.
     @Bindable var appState: AppState
+    /// Usage statistics rendered in daily and all-time sections.
     @Bindable var stats: UsageStats
+    /// Launch-at-login side-effect service.
     let launchAtLoginManager: LaunchAtLoginManager
 
     /// Builds grouped form with runtime status and persisted preference controls.
@@ -98,8 +116,19 @@ private struct GeneralTab: View {
 
             Section(String(localized: "settings.section.detection")) {
                 Toggle(String(localized: "settings.toggle.auto-diacritics"), isOn: $appState.autoAddRomanianDiacritics)
+                    .accessibilityIdentifier("settings.toggle.auto-diacritics")
+                Toggle(String(localized: "settings.toggle.auto-russian-yo"), isOn: $appState.autoAddRussianYo)
+                    .accessibilityIdentifier("settings.toggle.auto-russian-yo")
+                Toggle(String(localized: "settings.toggle.correct-double-capitals"), isOn: $appState.correctDoubleCapitals)
+                    .accessibilityIdentifier("settings.toggle.correct-double-capitals")
+                Toggle(String(localized: "settings.toggle.correct-duplicate-letters"), isOn: $appState.correctDuplicateLetters)
+                    .accessibilityIdentifier("settings.toggle.correct-duplicate-letters")
+                Toggle(String(localized: "settings.toggle.correct-common-typos"), isOn: $appState.correctCommonTypos)
+                    .accessibilityIdentifier("settings.toggle.correct-common-typos")
                 Toggle(String(localized: "settings.toggle.correct-single-char"), isOn: $appState.correctSingleCharacterWords)
+                    .accessibilityIdentifier("settings.toggle.correct-single-char")
                 Toggle(String(localized: "settings.toggle.auto-extend-recent"), isOn: $appState.autoExtendRecentAmbiguous)
+                    .accessibilityIdentifier("settings.toggle.auto-extend-recent")
                 Picker(String(localized: "settings.picker.aggressiveness"), selection: $appState.detectionSensitivity) {
                     ForEach(DetectionSensitivity.allCases, id: \.self) { sensitivity in
                         Text(sensitivity.localizedTitle).tag(sensitivity)
@@ -110,6 +139,13 @@ private struct GeneralTab: View {
                         Text(duration.localizedTitle).tag(duration)
                     }
                 }
+            }
+
+            Section(String(localized: "settings.section.feedback")) {
+                Toggle(String(localized: "settings.toggle.sound-feedback"), isOn: $appState.soundFeedbackEnabled)
+                    .accessibilityIdentifier("settings.toggle.sound-feedback")
+                Toggle(String(localized: "settings.toggle.visual-feedback"), isOn: $appState.visualFeedbackEnabled)
+                    .accessibilityIdentifier("settings.toggle.visual-feedback")
             }
 
             Section(String(localized: "settings.section.stats-today")) {
@@ -156,24 +192,11 @@ private struct AboutTab: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = String(localized: "settings.logs.export-filename")
+        let exporter = DiagnosticsLogExporter()
         panel.begin { result in
             guard result == .OK, let url = panel.url else { return }
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-            task.arguments = [
-                "show",
-                "--predicate", "subsystem == 'GIH.LayoutSwitcher'",
-                "--info",
-                "--last", "1h"
-            ]
-            let output = Pipe()
-            task.standardOutput = output
-            do {
-                try task.run()
-                let data = output.fileHandleForReading.readDataToEndOfFile()
-                try data.write(to: url)
-            } catch {
-                Logger(subsystem: "GIH.LayoutSwitcher", category: "ExportLogs").error("Export logs failed: \(error.localizedDescription, privacy: .public)")
+            Task { @MainActor in
+                await exporter.export(to: url)
             }
         }
     }

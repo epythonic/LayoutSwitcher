@@ -49,6 +49,7 @@ final class HotkeyCoordinator {
     private let smartPaste: SmartPaste?
     private let currentBundleIDProvider: () -> String?
     private let activeLanguageProvider: () -> LanguageID?
+    private let bundleNameProvider: @MainActor (String) -> String?
     private let now: @MainActor () -> Date
     private let undoWindow: TimeInterval = 3.0
     private let manualWindow: TimeInterval = 3.0
@@ -74,7 +75,8 @@ final class HotkeyCoordinator {
         learningCache: LearningCache? = nil,
         currentBundleIDProvider: @escaping () -> String? = { nil },
         activeLanguageProvider: (() -> LanguageID?)? = nil,
-        now: @escaping @MainActor () -> Date = Date.init
+        bundleNameProvider: @escaping @MainActor (String) -> String? = { _ in nil },
+        now: @escaping @MainActor () -> Date
     ) {
         self.buffer = buffer
         self.mapping = mapping
@@ -90,6 +92,7 @@ final class HotkeyCoordinator {
         self.activeLanguageProvider = activeLanguageProvider ?? {
             LanguageID(inputSourceLanguageCode: inputSources.current?.primaryLanguage)
         }
+        self.bundleNameProvider = bundleNameProvider
         self.now = now
     }
 
@@ -180,14 +183,14 @@ final class HotkeyCoordinator {
         )
         guard succeeded else { return }
         stats.recordManualSwitch()
-        recents.record(RecentSwitchEntry(
+        recents.record(
             original: last.text,
             corrected: corrected,
             bundleID: last.bundleID,
-            bundleName: last.bundleID.flatMap(ExclusionList.localizedName(for:)),
+            bundleName: last.bundleID.flatMap { bundleNameProvider($0) },
             kind: .manual,
             timestamp: now()
-        ))
+        )
     }
 
     /// Returns paired manual-toggle target language for a given active layout.
@@ -247,14 +250,14 @@ final class HotkeyCoordinator {
         case .success(let conversion, let method):
             Self.logger.info("convertSelection succeeded method=\(String(describing: method), privacy: .public) source=\(conversion.sourceLanguage.rawValue, privacy: .public) target=\(conversion.targetLanguage.rawValue, privacy: .public)")
             stats.recordManualSwitch()
-            recents.record(RecentSwitchEntry(
+            recents.record(
                 original: conversion.sourceText,
                 corrected: conversion.convertedText,
                 bundleID: currentBundleIDProvider(),
-                bundleName: currentBundleIDProvider().flatMap(ExclusionList.localizedName(for:)),
+                bundleName: currentBundleIDProvider().flatMap { bundleNameProvider($0) },
                 kind: .manual,
                 timestamp: now()
-            ))
+            )
         case .failure(let reason):
             Self.logger.info("convertSelection skipped: \(String(describing: reason), privacy: .public)")
         }

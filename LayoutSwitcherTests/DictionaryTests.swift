@@ -38,4 +38,44 @@ struct DictionaryTests {
         #expect(EmbeddedDictionaries.russian().size > 50)
         #expect(EmbeddedDictionaries.ukrainian().size > 50)
     }
+
+    @Test func embeddedDictionariesReturnStableValuesPerLanguage() {
+        let firstEnglish = EmbeddedDictionaries.english()
+        let secondEnglish = EmbeddedDictionaries.english()
+        let firstRussian = EmbeddedDictionaries.russian()
+        let secondRussian = EmbeddedDictionaries.russian()
+        let firstUkrainian = EmbeddedDictionaries.ukrainian()
+        let secondUkrainian = EmbeddedDictionaries.ukrainian()
+        let firstRomanian = EmbeddedDictionaries.romanian()
+        let secondRomanian = EmbeddedDictionaries.romanian()
+
+        #expect(firstEnglish.size == secondEnglish.size)
+        #expect(firstRussian.size == secondRussian.size)
+        #expect(firstUkrainian.size == secondUkrainian.size)
+        #expect(firstRomanian.size == secondRomanian.size)
+        #expect(secondEnglish.contains("hello"))
+        #expect(secondRussian.contains("привет"))
+        #expect(secondUkrainian.contains("привіт"))
+        #expect(secondRomanian.contains("bună"))
+    }
+
+    @Test func bundledFallbacksReturnStableValuesPerLanguage() {
+        let firstEnglish = BundledDictionaryLoader.loadOrEmbedded(language: .en)
+        let secondEnglish = BundledDictionaryLoader.loadOrEmbedded(language: .en)
+        let firstRussian = BundledDictionaryLoader.loadOrEmbedded(language: .ru)
+        let secondRussian = BundledDictionaryLoader.loadOrEmbedded(language: .ru)
+        let firstUkrainian = BundledDictionaryLoader.loadOrEmbedded(language: .uk)
+        let secondUkrainian = BundledDictionaryLoader.loadOrEmbedded(language: .uk)
+        let firstRomanian = BundledDictionaryLoader.loadOrEmbedded(language: .ro)
+        let secondRomanian = BundledDictionaryLoader.loadOrEmbedded(language: .ro)
+
+        #expect(firstEnglish.size == secondEnglish.size)
+        #expect(firstRussian.size == secondRussian.size)
+        #expect(firstUkrainian.size == secondUkrainian.size)
+        #expect(firstRomanian.size == secondRomanian.size)
+        #expect(secondEnglish.contains("hello"))
+        #expect(secondRussian.contains("привет"))
+        #expect(secondUkrainian.contains("привіт"))
+        #expect(secondRomanian.contains("bună"))
+    }
 }

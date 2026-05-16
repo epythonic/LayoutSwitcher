@@ -28,4 +28,16 @@ struct OnboardingCompletionStoreTests {
 
         #expect(writes == [true])
     }
+
+    @Test func markCompletedDoesNotWriteWhenAlreadyCompleted() {
+        var writes: [Bool] = []
+        let store = OnboardingCompletionStore(
+            readCompleted: { true },
+            writeCompleted: { writes.append($0) }
+        )
+
+        store.markCompleted()
+
+        #expect(writes.isEmpty)
+    }
 }

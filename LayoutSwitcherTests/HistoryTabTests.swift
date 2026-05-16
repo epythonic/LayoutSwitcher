@@ -4,9 +4,14 @@ import Testing
 
 @MainActor
 struct HistoryTabTests {
+    private static func fixedID(_ byte: UInt8) -> UUID {
+        UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, byte))
+    }
+
     @Test func exportPayloadContainsHeaderAndRows() {
         let entries = [
             RecentSwitchEntry(
+                id: Self.fixedID(1),
                 original: "ghbdtn",
                 corrected: "привет",
                 bundleID: "com.test.app",
@@ -15,6 +20,7 @@ struct HistoryTabTests {
                 timestamp: Date(timeIntervalSince1970: 0)
             ),
             RecentSwitchEntry(
+                id: Self.fixedID(2),
                 original: "rfr",
                 corrected: "как",
                 bundleID: "com.test.other",
@@ -26,7 +32,7 @@ struct HistoryTabTests {
 
         let payload = HistoryTab.exportPayload(
             for: entries,
-            formatter: Self.makeFormatter()
+            timestampStringProvider: Self.testTimestampString
         )
 
         #expect(payload == """
@@ -39,17 +45,20 @@ struct HistoryTabTests {
     @Test func exportPayloadKeepsHeaderWhenEntriesAreEmpty() {
         let payload = HistoryTab.exportPayload(
             for: [],
-            formatter: Self.makeFormatter()
+            timestampStringProvider: Self.testTimestampString
         )
 
         #expect(payload == "time\tapp\toriginal\tcorrected\tkind\n")
     }
 
-    private static func makeFormatter() -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter
+    private static func testTimestampString(for date: Date) -> String {
+        switch Int(date.timeIntervalSince1970) {
+        case 0:
+            return "1970-01-01 00:00:00"
+        case 60:
+            return "1970-01-01 00:01:00"
+        default:
+            return "unexpected"
+        }
     }
 }

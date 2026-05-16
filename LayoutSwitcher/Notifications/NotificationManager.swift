@@ -6,6 +6,13 @@ import os
 /// offering an inline "Undo" action that reverts the correction.
 @MainActor
 final class NotificationManager: NSObject {
+    typealias SetDelegate = @MainActor (UNUserNotificationCenterDelegate?) -> Void
+    typealias RequestAuthorization = @MainActor (@escaping @Sendable (Bool, Error?) -> Void) -> Void
+    typealias SetNotificationCategories = @MainActor (Set<UNNotificationCategory>) -> Void
+    typealias AddNotificationRequest = @MainActor (UNNotificationRequest, @escaping @Sendable (Error?) -> Void) -> Void
+    typealias RemoveDeliveredNotifications = @MainActor ([String]) -> Void
+    typealias MakeNotificationID = @MainActor () -> String
+
     nonisolated static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Notifications")
 
     /// Identifier for the auto-switch notification category.
@@ -16,32 +23,61 @@ final class NotificationManager: NSObject {
     /// Closure invoked when the user taps the Undo action on a notification.
     var onUndoRequested: (@MainActor () -> Void)?
 
+    /// Last delivered notification ID that can be cleared after an undo.
     private var pendingNotificationID: String?
-    private let setDelegate: (UNUserNotificationCenterDelegate?) -> Void
-    private let requestAuthorizationHandler: (@escaping @Sendable (Bool, Error?) -> Void) -> Void
-    private let setNotificationCategories: (Set<UNNotificationCategory>) -> Void
-    private let addNotificationRequest: (UNNotificationRequest, @escaping @Sendable (Error?) -> Void) -> Void
-    private let removeDeliveredNotifications: ([String]) -> Void
-    private let makeNotificationID: () -> String
+    /// Injected notification-center delegate setter.
+    private let setDelegate: SetDelegate
+    /// Injected authorization requester.
+    private let requestAuthorizationHandler: RequestAuthorization
+    /// Injected category registrar.
+    private let setNotificationCategories: SetNotificationCategories
+    /// Injected notification request sender.
+    private let addNotificationRequest: AddNotificationRequest
+    /// Injected delivered-notification remover.
+    private let removeDeliveredNotifications: RemoveDeliveredNotifications
+    /// Injected notification ID factory for deterministic tests.
+    private let makeNotificationID: MakeNotificationID
+    /// Explicit sound policy for posted notifications.
+    private let notificationSound: UNNotificationSound?
+
+    /// Creates a notification manager backed by the provided notification center.
+    convenience init(
+        notificationCenter: UNUserNotificationCenter,
+        makeNotificationID: @escaping MakeNotificationID,
+        notificationSound: UNNotificationSound?
+    ) {
+        self.init(
+            setDelegate: { delegate in
+                notificationCenter.delegate = delegate
+            },
+            requestAuthorization: { completion in
+                notificationCenter.requestAuthorization(options: [.alert, .sound], completionHandler: completion)
+            },
+            setNotificationCategories: { categories in
+                notificationCenter.setNotificationCategories(categories)
+            },
+            addNotificationRequest: { request, completion in
+                notificationCenter.add(request, withCompletionHandler: completion)
+            },
+            removeDeliveredNotifications: { identifiers in
+                notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
+            },
+            makeNotificationID: makeNotificationID,
+            notificationSound: notificationSound
+        )
+    }
 
     /// Creates a notification manager with injectable side-effect closures.
+    ///
+    /// Tests inject all closures to avoid touching the real notification center.
     init(
-        setDelegate: @escaping (UNUserNotificationCenterDelegate?) -> Void = { delegate in
-            UNUserNotificationCenter.current().delegate = delegate
-        },
-        requestAuthorization: @escaping (@escaping @Sendable (Bool, Error?) -> Void) -> Void = { completion in
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound], completionHandler: completion)
-        },
-        setNotificationCategories: @escaping (Set<UNNotificationCategory>) -> Void = { categories in
-            UNUserNotificationCenter.current().setNotificationCategories(categories)
-        },
-        addNotificationRequest: @escaping (UNNotificationRequest, @escaping @Sendable (Error?) -> Void) -> Void = { request, completion in
-            UNUserNotificationCenter.current().add(request, withCompletionHandler: completion)
-        },
-        removeDeliveredNotifications: @escaping ([String]) -> Void = { identifiers in
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
-        },
-        makeNotificationID: @escaping () -> String = { UUID().uuidString }
+        setDelegate: @escaping SetDelegate,
+        requestAuthorization: @escaping RequestAuthorization,
+        setNotificationCategories: @escaping SetNotificationCategories,
+        addNotificationRequest: @escaping AddNotificationRequest,
+        removeDeliveredNotifications: @escaping RemoveDeliveredNotifications,
+        makeNotificationID: @escaping MakeNotificationID,
+        notificationSound: UNNotificationSound?
     ) {
         self.setDelegate = setDelegate
         self.requestAuthorizationHandler = requestAuthorization
@@ -49,6 +85,7 @@ final class NotificationManager: NSObject {
         self.addNotificationRequest = addNotificationRequest
         self.removeDeliveredNotifications = removeDeliveredNotifications
         self.makeNotificationID = makeNotificationID
+        self.notificationSound = notificationSound
         super.init()
         self.setDelegate(self)
     }
@@ -89,7 +126,7 @@ final class NotificationManager: NSObject {
         content.title = String(localized: "notification.title.layout-switched")
         let bodyFormat = String(localized: "notification.body.auto-switched")
         content.body = String(format: bodyFormat, original, corrected)
-        content.sound = .default
+        content.sound = notificationSound
         content.categoryIdentifier = Self.autoSwitchCategory
         content.userInfo = ["original": original, "corrected": corrected]
 

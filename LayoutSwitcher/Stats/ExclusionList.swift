@@ -12,8 +12,14 @@ final class ExclusionList {
     private static let legacyDefaultsKey = "exclusionBundleIDs"
     private static let defaultSeedAppliedKey = "exclusions.defaultSeedApplied"
 
-    /// Recommended bundle identifiers seeded once on first launch.
-    static let defaults: Set<String> = [
+    /// Current and legacy bundle identifiers for self-exclusion.
+    static let selfBundleIDs: Set<String> = [
+        "GM.LayoutSwitcher",
+        "GIH.LayoutSwitcher"
+    ]
+
+    /// Recommended third-party and system bundle identifiers seeded once on first launch.
+    private static let recommendedBundleIDs: Set<String> = [
         "com.apple.Terminal",
         "com.apple.Console",
         "com.apple.ActivityMonitor",
@@ -28,18 +34,33 @@ final class ExclusionList {
         "com.jetbrains.WebStorm",
         "com.jetbrains.AppCode",
         "com.1password.1password",
-        "com.agilebits.onepassword7",
-        "GIH.LayoutSwitcher"
+        "com.agilebits.onepassword7"
     ]
+
+    /// Recommended bundle identifiers seeded once on first launch.
+    static let defaults: Set<String> = ExclusionList.recommendedBundleIDs.union(ExclusionList.selfBundleIDs)
 
     private(set) var bundleIDs: Set<String>
     private let userDefaults: UserDefaults
     private let localizedNameProvider: @MainActor (String) -> String?
 
-    /// Loads persisted exclusions or seeds the first-run recommended set.
+    /// Loads persisted exclusions or seeds the first-run recommended set using the provided workspace.
+    convenience init(
+        defaults: UserDefaults,
+        workspace: NSWorkspace
+    ) {
+        self.init(
+            defaults: defaults,
+            localizedNameProvider: { bundleID in
+                Self.localizedName(for: bundleID, workspace: workspace)
+            }
+        )
+    }
+
+    /// Loads persisted exclusions or seeds the first-run recommended set with injectable name lookup.
     init(
-        defaults: UserDefaults = .standard,
-        localizedNameProvider: @escaping @MainActor (String) -> String? = ExclusionList.localizedName(for:)
+        defaults: UserDefaults,
+        localizedNameProvider: @escaping @MainActor (String) -> String?
     ) {
         self.userDefaults = defaults
         self.localizedNameProvider = localizedNameProvider
@@ -84,7 +105,12 @@ final class ExclusionList {
 
     /// Resolves localized application display name for bundle identifier.
     static func localizedName(for bundleID: String) -> String? {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
+        localizedName(for: bundleID, workspace: .shared)
+    }
+
+    /// Resolves localized application display name for bundle identifier using the provided workspace.
+    static func localizedName(for bundleID: String, workspace: NSWorkspace) -> String? {
+        guard let url = workspace.urlForApplication(withBundleIdentifier: bundleID),
               let bundle = Bundle(url: url) else {
             return nil
         }

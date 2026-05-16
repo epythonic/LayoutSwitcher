@@ -23,6 +23,7 @@ enum HotkeyAction: Hashable, Sendable {
         .forceRetypeLastWord
     ]
 
+    /// Alias used by persistence code when all actions must be represented.
     static let allActions: [HotkeyAction] = ordered
 
     /// Localized title shown in settings rows and onboarding.
@@ -103,15 +104,22 @@ enum HotkeyAction: Hashable, Sendable {
 
 /// Key + modifier combination that maps to one `HotkeyAction`.
 struct HotkeyDefinition: Hashable, Sendable {
+    /// Hardware key code captured from Core Graphics or AppKit events.
     let keyCode: CGKeyCode
+    /// Modifier combination required with `keyCode`.
     let modifiers: ModifierMask
 
     /// Platform-agnostic modifier mask used for persisted / comparable hotkey definitions.
     struct ModifierMask: OptionSet, Hashable, Sendable {
+        /// Raw bitmask persisted in user defaults.
         let rawValue: UInt64
+        /// Control modifier flag.
         static let control = ModifierMask(rawValue: 1 << 0)
+        /// Option modifier flag.
         static let option  = ModifierMask(rawValue: 1 << 1)
+        /// Shift modifier flag.
         static let shift   = ModifierMask(rawValue: 1 << 2)
+        /// Command modifier flag.
         static let command = ModifierMask(rawValue: 1 << 3)
     }
 }
@@ -140,10 +148,12 @@ extension HotkeyDefinition {
         return parts.joined()
     }
 
+    /// Maps known virtual key codes to readable labels.
     private static func keyName(for keyCode: CGKeyCode) -> String {
         switch keyCode {
         case 6: return "Z"
         case 8: return "C"
+        case 9: return "V"
         case 15: return "R"
         case 35: return "P"
         case 42: return "\\"
@@ -160,13 +170,20 @@ extension HotkeyDefinition {
 @MainActor
 @Observable
 final class HotkeyRegistry {
+    /// UserDefaults key storing hotkey binding payloads.
     private static let defaultsKey = "settings.hotkeys.bindings"
+    /// Payload key marking whether an action is explicitly bound.
     private static let boundPayloadKey = "bound"
+    /// Payload key storing the virtual key code.
     private static let keyCodePayloadKey = "keyCode"
+    /// Payload key storing modifier raw bits.
     private static let modifiersPayloadKey = "modifiers"
 
+    /// Current hotkey bindings keyed by shortcut definition.
     private(set) var bindings: [HotkeyDefinition: HotkeyAction]
+    /// Storage used for persistence.
     private let defaults: UserDefaults
+    /// Callback invoked when a matched hotkey action should run.
     var onAction: ((HotkeyAction) -> Void)?
     /// Notifies subscribers (e.g. `CarbonHotkeyManager`) that bindings changed
     /// and should be re-registered with the OS.
@@ -178,7 +195,7 @@ final class HotkeyRegistry {
     }
 
     /// Builds registry with default shortcut bindings.
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults) {
         self.defaults = defaults
         self.bindings = Self.loadBindings(from: defaults)
     }

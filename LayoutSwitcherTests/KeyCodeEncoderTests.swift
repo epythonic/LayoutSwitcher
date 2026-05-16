@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 import Testing
@@ -5,52 +6,103 @@ import Testing
 
 @MainActor
 struct KeyCodeEncoderTests {
+    @Test func encodesLowercaseAFromInjectedTranslator() {
+        let encoded = KeyCodeEncoder.encode(
+            "a",
+            layoutData: Self.fakeLayoutData,
+            keyboardType: 0,
+            keyTranslator: Self.translator(outputs: [
+                .init(keyCode: 0, modifiers: 0, output: "a")
+            ])
+        )
 
-    /// Finds the first enabled English layout and returns its unicode key layout data.
-    private static func englishLayoutData() -> Data? {
-        let manager = InputSourceManager()
-        let layouts = manager.keyboardLayouts()
-        guard let source = layouts.first(where: {
-            ($0.primaryLanguage ?? "").hasPrefix("en") || $0.id.contains("ABC")
-        }) else { return nil }
-        return source.unicodeKeyLayoutData()
-    }
-
-    @Test func encodesLowercaseA() async throws {
-        guard let data = Self.englishLayoutData() else {
-            // No English layout available on this system — test is not applicable.
-            return
-        }
-        let encoded = KeyCodeEncoder.encode("a", layoutData: data)
         #expect(encoded != nil)
         #expect(encoded?.keyCode == 0)
         #expect(encoded?.flags == [])
     }
 
-    @Test func encodesUppercaseAWithShift() async throws {
-        guard let data = Self.englishLayoutData() else { return }
-        let encoded = KeyCodeEncoder.encode("A", layoutData: data)
+    @Test func encodesUppercaseAWithShiftFromInjectedTranslator() {
+        let encoded = KeyCodeEncoder.encode(
+            "A",
+            layoutData: Self.fakeLayoutData,
+            keyboardType: 0,
+            keyTranslator: Self.translator(outputs: [
+                .init(keyCode: 0, modifiers: Self.shiftModifier, output: "A")
+            ])
+        )
+
         #expect(encoded != nil)
+        #expect(encoded?.keyCode == 0)
         #expect(encoded?.flags.contains(.maskShift) == true)
     }
 
-    @Test func encodesDigit() async throws {
-        guard let data = Self.englishLayoutData() else { return }
-        let encoded = KeyCodeEncoder.encode("1", layoutData: data)
-        #expect(encoded != nil)
+    @Test func encodesAlternateModifiedCharacter() {
+        let encoded = KeyCodeEncoder.encode(
+            "ø",
+            layoutData: Self.fakeLayoutData,
+            keyboardType: 0,
+            keyTranslator: Self.translator(outputs: [
+                .init(keyCode: 31, modifiers: Self.optionModifier, output: "ø")
+            ])
+        )
+
+        #expect(encoded?.keyCode == 31)
+        #expect(encoded?.flags.contains(.maskAlternate) == true)
     }
 
-    @Test func failsForUnsupportedCharacter() async throws {
-        guard let data = Self.englishLayoutData() else { return }
-        // U+1F600 (emoji) is unlikely to map on a standard US layout.
-        let encoded = KeyCodeEncoder.encode("\u{1F600}", layoutData: data)
+    @Test func returnsNilForUnsupportedCharacter() {
+        let encoded = KeyCodeEncoder.encode(
+            "\u{1F600}",
+            layoutData: Self.fakeLayoutData,
+            keyboardType: 0,
+            keyTranslator: Self.translator(outputs: [])
+        )
+
         #expect(encoded == nil)
     }
 
-    @Test func layoutDataAvailableForAtLeastOneKeyboard() async throws {
-        let manager = InputSourceManager()
-        let layouts = manager.keyboardLayouts()
-        let anyData = layouts.lazy.compactMap { $0.unicodeKeyLayoutData() }.first
-        #expect(anyData != nil, "No keyboard layout data available on this system")
+    @Test func ignoresFailedTranslatorStatus() {
+        let encoded = KeyCodeEncoder.encode(
+            "a",
+            layoutData: Self.fakeLayoutData,
+            keyboardType: 0,
+            keyTranslator: { _, _, _, _, _, _, _, _, actualStringLength, _ in
+                actualStringLength.pointee = 0
+                return OSStatus(paramErr)
+            }
+        )
+
+        #expect(encoded == nil)
+    }
+
+    private static let fakeLayoutData = Data([0])
+    private static let shiftModifier = UInt32(shiftKey >> 8)
+    private static let optionModifier = UInt32(optionKey >> 8)
+
+    private struct Translation {
+        let keyCode: UInt16
+        let modifiers: UInt32
+        let output: String
+    }
+
+    private static func translator(outputs: [Translation]) -> KeyCodeEncoder.KeyTranslator {
+        { _, keyCode, _, modifiers, _, _, _, maxStringLength, actualStringLength, unicodeString in
+            guard let output = outputs.first(where: { $0.keyCode == keyCode && $0.modifiers == modifiers }) else {
+                actualStringLength.pointee = 0
+                return OSStatus(noErr)
+            }
+
+            let utf16 = Array(output.output.utf16)
+            guard utf16.count <= maxStringLength else {
+                actualStringLength.pointee = 0
+                return OSStatus(paramErr)
+            }
+
+            for (index, unit) in utf16.enumerated() {
+                unicodeString[index] = unit
+            }
+            actualStringLength.pointee = utf16.count
+            return OSStatus(noErr)
+        }
     }
 }

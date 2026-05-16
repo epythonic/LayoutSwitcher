@@ -4,12 +4,15 @@ import Testing
 
 @MainActor
 struct ExclusionListTests {
-    private func makeDefaults() -> UserDefaults {
-        UserDefaults(suiteName: "ExclusionListTests-\(UUID().uuidString)") ?? .standard
+    private func makeDefaults(_ testName: String = #function) throws -> UserDefaults {
+        let suiteName = "ExclusionListTests.\(testName)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
     }
 
-    @Test func firstRunSeedsRecommendedDefaults() {
-        let defaults = makeDefaults()
+    @Test func firstRunSeedsRecommendedDefaults() throws {
+        let defaults = try makeDefaults()
 
         let exclusions = ExclusionList(defaults: defaults, localizedNameProvider: { _ in nil })
 
@@ -17,13 +20,20 @@ struct ExclusionListTests {
         #expect(exclusions.contains("com.apple.Console"))
         #expect(exclusions.contains("com.apple.ActivityMonitor"))
         #expect(exclusions.contains("com.apple.ScriptEditor2"))
+        #expect(exclusions.contains("GM.LayoutSwitcher"))
         #expect(exclusions.contains("GIH.LayoutSwitcher"))
         #expect(defaults.bool(forKey: "exclusions.defaultSeedApplied"))
         #expect(Set(defaults.array(forKey: "exclusions.bundleIDs") as? [String] ?? []) == ExclusionList.defaults)
     }
 
-    @Test func userRemovedDefaultIsNotSeededAgain() {
-        let defaults = makeDefaults()
+    @Test func defaultExclusionsContainCurrentAndLegacySelfBundleIDs() throws {
+        #expect(ExclusionList.selfBundleIDs.contains("GM.LayoutSwitcher"))
+        #expect(ExclusionList.selfBundleIDs.contains("GIH.LayoutSwitcher"))
+        #expect(ExclusionList.selfBundleIDs.isSubset(of: ExclusionList.defaults))
+    }
+
+    @Test func userRemovedDefaultIsNotSeededAgain() throws {
+        let defaults = try makeDefaults()
         let exclusions = ExclusionList(defaults: defaults, localizedNameProvider: { _ in nil })
 
         exclusions.remove("com.apple.Terminal")
@@ -33,8 +43,8 @@ struct ExclusionListTests {
         #expect(reloaded.contains("com.apple.Console"))
     }
 
-    @Test func seedAppliedWithoutStoredListDoesNotReapplyDefaults() {
-        let defaults = makeDefaults()
+    @Test func seedAppliedWithoutStoredListDoesNotReapplyDefaults() throws {
+        let defaults = try makeDefaults()
         defaults.set(true, forKey: "exclusions.defaultSeedApplied")
 
         let exclusions = ExclusionList(defaults: defaults, localizedNameProvider: { _ in nil })
@@ -43,8 +53,8 @@ struct ExclusionListTests {
         #expect((defaults.array(forKey: "exclusions.bundleIDs") as? [String]) == [])
     }
 
-    @Test func legacyDefaultsKeyIsMigratedToNamespacedKey() {
-        let defaults = makeDefaults()
+    @Test func legacyDefaultsKeyIsMigratedToNamespacedKey() throws {
+        let defaults = try makeDefaults()
         defaults.set(["com.example.Legacy"], forKey: "exclusionBundleIDs")
 
         let exclusions = ExclusionList(defaults: defaults, localizedNameProvider: { _ in nil })
@@ -53,8 +63,8 @@ struct ExclusionListTests {
         #expect(defaults.array(forKey: "exclusions.bundleIDs") as? [String] != nil)
     }
 
-    @Test func persistRemovesLegacyDefaultsKey() {
-        let defaults = makeDefaults()
+    @Test func persistRemovesLegacyDefaultsKey() throws {
+        let defaults = try makeDefaults()
         defaults.set(["com.example.Legacy"], forKey: "exclusionBundleIDs")
         let exclusions = ExclusionList(defaults: defaults, localizedNameProvider: { _ in nil })
 
@@ -62,5 +72,20 @@ struct ExclusionListTests {
 
         #expect(defaults.object(forKey: "exclusionBundleIDs") == nil)
         #expect(exclusions.contains("com.example.New"))
+    }
+
+    @Test func sortedEntriesUseInjectedLocalizedNameProvider() throws {
+        let defaults = try makeDefaults()
+        defaults.set(["com.example.Zeta", "com.example.Alpha"], forKey: "exclusions.bundleIDs")
+
+        let exclusions = ExclusionList(
+            defaults: defaults,
+            localizedNameProvider: { bundleID in
+                ["com.example.Alpha": "Alpha App"][bundleID]
+            }
+        )
+
+        #expect(exclusions.sortedEntries().map(\.bundleID) == ["com.example.Alpha", "com.example.Zeta"])
+        #expect(exclusions.sortedEntries().map(\.name) == ["Alpha App", "com.example.Zeta"])
     }
 }

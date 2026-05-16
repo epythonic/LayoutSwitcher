@@ -8,13 +8,18 @@ struct OnboardingCompletionStore {
     private let readCompleted: @MainActor () -> Bool
     private let writeCompleted: @MainActor (Bool) -> Void
 
+    /// Creates a store backed by the provided defaults suite.
+    init(defaults: UserDefaults) {
+        self.init(
+            readCompleted: { defaults.bool(forKey: Self.completedKey) },
+            writeCompleted: { value in defaults.set(value, forKey: Self.completedKey) }
+        )
+    }
+
+    /// Creates a store with injectable persistence closures for deterministic tests.
     init(
-        readCompleted: @escaping @MainActor () -> Bool = {
-            UserDefaults.standard.bool(forKey: Self.completedKey)
-        },
-        writeCompleted: @escaping @MainActor (Bool) -> Void = { value in
-            UserDefaults.standard.set(value, forKey: Self.completedKey)
-        }
+        readCompleted: @escaping @MainActor () -> Bool,
+        writeCompleted: @escaping @MainActor (Bool) -> Void
     ) {
         self.readCompleted = readCompleted
         self.writeCompleted = writeCompleted
@@ -27,6 +32,10 @@ struct OnboardingCompletionStore {
 
     /// Persists successful onboarding completion.
     func markCompleted() {
+        guard !isCompleted else {
+            return
+        }
+
         writeCompleted(true)
     }
 }

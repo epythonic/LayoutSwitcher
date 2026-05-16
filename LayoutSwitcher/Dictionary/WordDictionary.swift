@@ -12,8 +12,8 @@ protocol WordDictionary {
     var size: Int { get }
 }
 
-/// Lightweight normalized dictionary optimized for deterministic tests and fallback corpora.
-final class InMemoryDictionary: WordDictionary {
+/// Immutable normalized dictionary optimized for deterministic tests and fallback corpora.
+struct InMemoryDictionary: WordDictionary, Sendable {
     let language: LanguageID
     private let words: Set<String>
 

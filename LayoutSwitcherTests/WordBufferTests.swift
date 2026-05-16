@@ -1,11 +1,12 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import LayoutSwitcher
 
 @MainActor
 struct WordBufferTests {
     @Test func appendAccumulatesCharacters() {
-        let buffer = WordBuffer()
+        let buffer = Self.makeBuffer()
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.append(KeyEvent(keyCode: 4, flags: [], unicode: "h", timestamp: 2))
         #expect(buffer.characters.count == 2)
@@ -13,7 +14,7 @@ struct WordBufferTests {
     }
 
     @Test func commitEmitsWordAndClearsBuffer() {
-        let buffer = WordBuffer()
+        let buffer = Self.makeBuffer()
         var committed: CommittedWord?
         buffer.onCommitted = { word in committed = word }
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
@@ -26,7 +27,7 @@ struct WordBufferTests {
     }
 
     @Test func deleteLastRemovesOneCharacter() {
-        let buffer = WordBuffer()
+        let buffer = Self.makeBuffer()
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.append(KeyEvent(keyCode: 4, flags: [], unicode: "h", timestamp: 2))
         buffer.deleteLast()
@@ -35,7 +36,7 @@ struct WordBufferTests {
     }
 
     @Test func resetClearsBufferAndLastCommitted() {
-        let buffer = WordBuffer()
+        let buffer = Self.makeBuffer()
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.commit(separator: .space, separatorKeyCode: 49)
         buffer.reset(reason: .appChanged)
@@ -44,7 +45,7 @@ struct WordBufferTests {
     }
 
     @Test func clearLastCommittedDoesNotAffectCharacters() {
-        let buffer = WordBuffer()
+        let buffer = Self.makeBuffer()
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.append(KeyEvent(keyCode: 4, flags: [], unicode: "h", timestamp: 2))
         buffer.clearLastCommitted()
@@ -53,7 +54,7 @@ struct WordBufferTests {
     }
 
     @Test func appendAfterCommitClearsLastCommitted() {
-        let buffer = WordBuffer()
+        let buffer = Self.makeBuffer()
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.commit(separator: .space, separatorKeyCode: 49)
         #expect(buffer.lastCommitted != nil)
@@ -62,11 +63,15 @@ struct WordBufferTests {
     }
 
     @Test func resetWithNavigationKeepsLastCommitted() {
-        let buffer = WordBuffer()
+        let buffer = Self.makeBuffer()
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.commit(separator: .space, separatorKeyCode: 49)
         // .navigation clears lastCommitted per current implementation
         buffer.reset(reason: .navigation)
         #expect(buffer.lastCommitted == nil)
+    }
+
+    private static func makeBuffer() -> WordBuffer {
+        WordBuffer(now: { Date(timeIntervalSinceReferenceDate: 1_000) })
     }
 }

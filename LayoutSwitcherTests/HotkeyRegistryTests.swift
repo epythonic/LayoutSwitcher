@@ -6,17 +6,15 @@ import Testing
 @MainActor
 struct HotkeyRegistryTests {
 
-    private static func makeDefaults(_ suffix: String) -> (defaults: UserDefaults, suiteName: String) {
+    private static func makeDefaults(_ suffix: String) throws -> (defaults: UserDefaults, suiteName: String) {
         let suiteName = "com.gih.LayoutSwitcher.HotkeyRegistryTests.\(suffix)"
-        let defaults = UserDefaults(suiteName: suiteName)
-        #expect(defaults != nil)
-        guard let defaults else { return (defaults: UserDefaults.standard, suiteName: suiteName) }
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         return (defaults: defaults, suiteName: suiteName)
     }
 
-    @Test func customBindingPersistsToDefaults() {
-        let fixture = Self.makeDefaults("customBindingPersists")
+    @Test func customBindingPersistsToDefaults() throws {
+        let fixture = try Self.makeDefaults("customBindingPersists")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -31,8 +29,8 @@ struct HotkeyRegistryTests {
         #expect(reloaded.binding(for: .manualToggleLast) == customDefinition)
     }
 
-    @Test func defaultBindingsContainManualToggleAndUndo() {
-        let fixture = Self.makeDefaults("defaultBindingsContainManualToggleAndUndo")
+    @Test func defaultBindingsContainManualToggleAndUndo() throws {
+        let fixture = try Self.makeDefaults("defaultBindingsContainManualToggleAndUndo")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -47,8 +45,20 @@ struct HotkeyRegistryTests {
         #expect(registry.bindings.values.contains(.forceRetypeLastWord))
     }
 
-    @Test func defaultBindingsIncludeSnooze() {
-        let fixture = Self.makeDefaults("defaultBindingsIncludeSnooze")
+    @Test func allHotkeyActionsHaveLocalizedTitleAndSubtitle() throws {
+        for action in HotkeyAction.ordered {
+            let title = action.localizedTitle
+            let subtitle = action.localizedSubtitle
+
+            #expect(!title.isEmpty)
+            #expect(!subtitle.isEmpty)
+            #expect(!title.hasPrefix("settings.hotkeys."))
+            #expect(!subtitle.hasPrefix("settings.hotkeys."))
+        }
+    }
+
+    @Test func defaultBindingsIncludeSnooze() throws {
+        let fixture = try Self.makeDefaults("defaultBindingsIncludeSnooze")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -73,8 +83,41 @@ struct HotkeyRegistryTests {
         #expect(registry.match(event) == .snooze)
     }
 
-    @Test func matchReturnsActionForKeyDownWithCorrectModifiers() {
-        let fixture = Self.makeDefaults("matchReturnsAction")
+    @Test func smartPasteDefaultBindingDisplaysReadableKeyName() throws {
+        let fixture = try Self.makeDefaults("smartPasteDefaultBindingDisplaysReadableKeyName")
+        let defaults = fixture.defaults
+        let suiteName = fixture.suiteName
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let registry = HotkeyRegistry(defaults: defaults)
+
+        #expect(registry.binding(for: .smartPaste)?.displayText == "⌃⌥⌘V")
+    }
+
+    @Test func defaultSmartPasteBindingMatchesControlOptionCommandV() throws {
+        let fixture = try Self.makeDefaults("defaultSmartPasteBindingMatchesControlOptionCommandV")
+        let defaults = fixture.defaults
+        let suiteName = fixture.suiteName
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let registry = HotkeyRegistry(defaults: defaults)
+        let event = KeyEvent(
+            kind: .keyDown,
+            keyCode: 9,
+            flags: [.maskControl, .maskAlternate, .maskCommand],
+            unicode: "v",
+            isAutoRepeat: false,
+            sourcePID: 0,
+            timestamp: 0
+        )
+
+        #expect(registry.match(event) == .smartPaste)
+    }
+
+    @Test func matchReturnsActionForKeyDownWithCorrectModifiers() throws {
+        let fixture = try Self.makeDefaults("matchReturnsAction")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -93,8 +136,8 @@ struct HotkeyRegistryTests {
         #expect(registry.match(event) == .manualToggleLast)
     }
 
-    @Test func matchReturnsNilForKeyUp() {
-        let fixture = Self.makeDefaults("matchReturnsNilForKeyUp")
+    @Test func matchReturnsNilForKeyUp() throws {
+        let fixture = try Self.makeDefaults("matchReturnsNilForKeyUp")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -113,8 +156,8 @@ struct HotkeyRegistryTests {
         #expect(registry.match(event) == nil)
     }
 
-    @Test func matchReturnsNilForWrongModifiers() {
-        let fixture = Self.makeDefaults("matchReturnsNilForWrongModifiers")
+    @Test func matchReturnsNilForWrongModifiers() throws {
+        let fixture = try Self.makeDefaults("matchReturnsNilForWrongModifiers")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -133,8 +176,8 @@ struct HotkeyRegistryTests {
         #expect(registry.match(event) == nil)
     }
 
-    @Test func setBindingReplacesOldDefinition() {
-        let fixture = Self.makeDefaults("setBindingReplacesOldDefinition")
+    @Test func setBindingReplacesOldDefinition() throws {
+        let fixture = try Self.makeDefaults("setBindingReplacesOldDefinition")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -149,8 +192,8 @@ struct HotkeyRegistryTests {
         #expect(registry.bindings[oldDef] == nil)
     }
 
-    @Test func setBindingReturnsConflictedActionAndUnassignsOld() {
-        let fixture = Self.makeDefaults("setBindingReturnsConflictedAction")
+    @Test func setBindingReturnsConflictedActionAndUnassignsOld() throws {
+        let fixture = try Self.makeDefaults("setBindingReturnsConflictedAction")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -166,8 +209,8 @@ struct HotkeyRegistryTests {
         #expect(registry.binding(for: .undoLastAutoSwitch) == nil)
     }
 
-    @Test func setBindingDoesNotReturnReplacedActionForSameAction() {
-        let fixture = Self.makeDefaults("setBindingSameAction")
+    @Test func setBindingDoesNotReturnReplacedActionForSameAction() throws {
+        let fixture = try Self.makeDefaults("setBindingSameAction")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {
@@ -181,8 +224,8 @@ struct HotkeyRegistryTests {
         #expect(registry.binding(for: .manualToggleLast) == existingDef)
     }
 
-    @Test func setBindingConflictPersistsAcrossLaunches() {
-        let fixture = Self.makeDefaults("setBindingConflictPersistsAcrossLaunches")
+    @Test func setBindingConflictPersistsAcrossLaunches() throws {
+        let fixture = try Self.makeDefaults("setBindingConflictPersistsAcrossLaunches")
         let defaults = fixture.defaults
         let suiteName = fixture.suiteName
         defer {

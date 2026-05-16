@@ -4,9 +4,13 @@ import UniformTypeIdentifiers
 
 /// Language-specific user dictionary management tab.
 struct DictionariesTab: View {
+    /// User-maintained English dictionary.
     @Bindable var english: UserDictionary
+    /// User-maintained Russian dictionary.
     @Bindable var russian: UserDictionary
+    /// User-maintained Ukrainian dictionary.
     @Bindable var ukrainian: UserDictionary
+    /// User-maintained Romanian dictionary.
     @Bindable var romanian: UserDictionary
 
     /// Shows one editor per supported language.
@@ -27,8 +31,11 @@ struct DictionariesTab: View {
 
 /// Editor for a single language user dictionary.
 private struct DictionaryEditor: View {
+    /// Dictionary model edited by this pane.
     @Bindable var dictionary: UserDictionary
+    /// Text field contents before the word is committed.
     @State private var input: String = ""
+    /// Currently selected word in the dictionary list.
     @State private var selection: String?
 
     /// Renders add/list/remove/import controls for a dictionary.

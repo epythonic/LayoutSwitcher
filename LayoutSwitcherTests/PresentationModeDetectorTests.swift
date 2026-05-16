@@ -32,7 +32,8 @@ struct PresentationModeDetectorTests {
         #expect(detector.isPresenting)
     }
 
-    @Test func defaultSetContainsKeynote() {
+    @Test func defaultDetectorUsesSharedDefaultSet() {
         #expect(PresentationModeDetector.defaultPresentationBundleIDs.contains("com.apple.iWork.Keynote"))
+        #expect(PresentationModeDetector.defaultPresentationBundleIDs.contains("com.apple.Pages"))
     }
 }

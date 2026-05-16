@@ -4,6 +4,7 @@ import SwiftUI
 /// Owns and presents singleton Help window instance.
 @MainActor
 final class HelpWindowController: NSObject {
+    /// Lazily created singleton help window.
     private var window: NSWindow?
 
     /// Opens help window or brings existing one to front.

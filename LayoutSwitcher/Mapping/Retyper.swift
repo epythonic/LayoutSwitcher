@@ -13,7 +13,7 @@ struct RetypeInputSource: Equatable {
     /// Primary language reported by the input source, when available.
     let primaryLanguage: String?
     /// Live system input source used only on the main actor for selection.
-    fileprivate let source: InputSource?
+    let source: InputSource?
     /// Cached Unicode key layout data used to encode target characters.
     fileprivate let layoutData: Data?
 
@@ -31,7 +31,7 @@ struct RetypeInputSource: Equatable {
         self.layoutData = layoutData
     }
 
-    fileprivate init(_ source: InputSource) {
+    init(_ source: InputSource) {
         self.id = source.id
         self.primaryLanguage = source.primaryLanguage
         self.source = source
@@ -72,8 +72,13 @@ enum RetypeResult: Equatable, Sendable {
     }
 }
 
+/// Performs safe synthetic retyping after a target keyboard layout is selected.
+///
+/// The retyper avoids destructive input until the target layout is available and
+/// confirmed. All side effects are injected so tests can exercise layout
+/// selection, timing, and event posting deterministically.
 @MainActor
-final class Retyper {
+struct Retyper {
     static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Retyper")
 
     private let mapping: any KeyboardMapping
@@ -86,42 +91,27 @@ final class Retyper {
     private let postUnicodeEvent: @MainActor (String) -> Void
     private let capsLockGuard: CapsLockGuard
 
+    /// Creates a retyper with all side effects injected by the composition root.
     init(
         mapping: any KeyboardMapping,
-        inputSources: any InputSourceManaging,
-        enabledLayoutsProvider: (@MainActor () -> [RetypeInputSource])? = nil,
-        currentLayoutIDProvider: (@MainActor () -> String?)? = nil,
-        refreshCurrentLayout: (@MainActor () -> Void)? = nil,
-        selectLayout: (@MainActor (RetypeInputSource) -> OSStatus)? = nil,
-        sleep: (@MainActor (UInt64) async -> Void)? = nil,
-        postKeyEvent: (@MainActor (CGKeyCode, CGEventFlags) -> Void)? = nil,
-        postUnicodeEvent: (@MainActor (String) -> Void)? = nil,
-        capsLockGuard: CapsLockGuard? = nil
+        enabledLayoutsProvider: @escaping @MainActor () -> [RetypeInputSource],
+        currentLayoutIDProvider: @escaping @MainActor () -> String?,
+        refreshCurrentLayout: @escaping @MainActor () -> Void,
+        selectLayout: @escaping @MainActor (RetypeInputSource) -> OSStatus,
+        sleep: @escaping @MainActor (UInt64) async -> Void,
+        postKeyEvent: @escaping @MainActor (CGKeyCode, CGEventFlags) -> Void,
+        postUnicodeEvent: @escaping @MainActor (String) -> Void,
+        capsLockGuard: CapsLockGuard
     ) {
         self.mapping = mapping
-        self.enabledLayoutsProvider = enabledLayoutsProvider ?? {
-            inputSources.enabledLayouts().map(RetypeInputSource.init)
-        }
-        self.currentLayoutIDProvider = currentLayoutIDProvider ?? {
-            inputSources.current?.id
-        }
-        self.refreshCurrentLayout = refreshCurrentLayout ?? {
-            inputSources.refresh()
-        }
-        self.selectLayout = selectLayout ?? { layout in
-            guard let source = layout.source else { return OSStatus(paramErr) }
-            return inputSources.select(source)
-        }
-        self.sleep = sleep ?? { nanoseconds in
-            try? await Task.sleep(nanoseconds: nanoseconds)
-        }
-        self.postKeyEvent = postKeyEvent ?? { keyCode, flags in
-            Self.postKey(keyCode: keyCode, flags: flags)
-        }
-        self.postUnicodeEvent = postUnicodeEvent ?? { text in
-            Self.postUnicode(text)
-        }
-        self.capsLockGuard = capsLockGuard ?? CapsLockGuard()
+        self.enabledLayoutsProvider = enabledLayoutsProvider
+        self.currentLayoutIDProvider = currentLayoutIDProvider
+        self.refreshCurrentLayout = refreshCurrentLayout
+        self.selectLayout = selectLayout
+        self.sleep = sleep
+        self.postKeyEvent = postKeyEvent
+        self.postUnicodeEvent = postUnicodeEvent
+        self.capsLockGuard = capsLockGuard
     }
 
     /// Erase original word + separator, switch to target layout, type corrected word + separator.
@@ -390,7 +380,7 @@ final class Retyper {
         return currentLayoutIDProvider() == id
     }
 
-    private static func postKey(keyCode: CGKeyCode, flags: CGEventFlags = []) {
+    static func postKey(keyCode: CGKeyCode, flags: CGEventFlags = []) {
         let source = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
@@ -404,7 +394,7 @@ final class Retyper {
         up.post(tap: .cghidEventTap)
     }
 
-    private static func postUnicode(_ text: String) {
+    static func postUnicode(_ text: String) {
         guard !text.isEmpty else { return }
         let source = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),

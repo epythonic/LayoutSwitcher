@@ -46,4 +46,11 @@ extension InputSourceManaging {
     func enabledLayoutSnapshot(id: String) -> InputSourceSnapshot? {
         enabledLayoutSnapshots().first { $0.id == id }
     }
+
+    /// Languages that can actually be selected from currently enabled layouts.
+    func enabledLayoutLanguages() -> Set<LanguageID> {
+        Set(enabledLayouts().compactMap { source in
+            LanguageID(inputSourceLanguageCode: source.primaryLanguage)
+        })
+    }
 }

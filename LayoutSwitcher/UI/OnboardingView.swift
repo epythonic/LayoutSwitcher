@@ -3,16 +3,35 @@ import SwiftUI
 /// First-run setup flow that guides user through accessibility permission grant,
 /// layout pair confirmation, hotkey overview, and a live typing sandbox.
 struct OnboardingView: View {
+    /// Accessibility permission monitor used by the permission step.
     @Bindable var permission: AccessibilityPermission
+    /// Input-source manager used by the layout confirmation step.
     @Bindable var inputSources: InputSourceManager
+    /// Hotkey registry used by the hotkey overview step.
     @Bindable var hotkeyRegistry: HotkeyRegistry
+    /// Completion callback invoked when onboarding reaches the final step.
     let onFinish: () -> Void
 
+    /// Current onboarding step.
     @State private var step: Step = .welcome
+    /// Local typing sandbox text; not persisted.
     @State private var sandboxText: String = ""
 
     /// Sequential onboarding stages.
-    enum Step { case welcome, accessibility, layouts, hotkeys, sandbox, done }
+    enum Step {
+        /// Introductory explanation.
+        case welcome
+        /// Accessibility permission grant and recheck.
+        case accessibility
+        /// Enabled layout summary.
+        case layouts
+        /// Default hotkey overview.
+        case hotkeys
+        /// Local typing sandbox.
+        case sandbox
+        /// Completion screen.
+        case done
+    }
 
     /// Renders current onboarding step and action controls.
     var body: some View {

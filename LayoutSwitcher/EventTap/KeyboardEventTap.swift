@@ -10,9 +10,9 @@ final class KeyboardEventTap {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    var onKeyEvent: ((KeyEvent) -> Void)?
+    var onKeyEvent: (@MainActor (KeyEvent) -> Void)?
     /// Returns true if the event was consumed (a hotkey fired) and should be suppressed system-wide.
-    var hotkeyHandler: ((KeyEvent) -> Bool)?
+    var hotkeyHandler: (@MainActor (KeyEvent) -> Bool)?
 
     /// Indicates whether low-level event tap is currently installed.
     var isRunning: Bool { eventTap != nil }
@@ -64,7 +64,7 @@ final class KeyboardEventTap {
     }
 
     /// Handles raw callback events, filtering synthetic input and dispatching normalized events.
-    fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             Self.logger.warning("Tap disabled (\(type.rawValue, privacy: .public)) — re-enabling")
             if let tap = eventTap {

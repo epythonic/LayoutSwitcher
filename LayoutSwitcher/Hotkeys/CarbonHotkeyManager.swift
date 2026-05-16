@@ -14,13 +14,19 @@ final class CarbonHotkeyManager {
     /// FourCharCode 'LSWT' identifier used for all hotkey IDs from this app.
     private static let signature: OSType = 0x4C53_5754
 
+    /// Installed Carbon event handler reference, if active.
     private var handlerRef: EventHandlerRef?
+    /// Registered Carbon hotkey references keyed by app-local hotkey ID.
     private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
+    /// App action lookup keyed by app-local hotkey ID.
     private var actionByID: [UInt32: HotkeyAction] = [:]
+    /// Monotonic app-local hotkey ID generator.
     private var nextID: UInt32 = 1
 
+    /// Callback invoked when Carbon reports a registered hotkey press.
     var onAction: ((HotkeyAction) -> Void)?
 
+    /// Creates an empty manager; call `install()` before registering bindings.
     init() {}
 
     /// Install Carbon event handler that dispatches `kEventHotKeyPressed`.
@@ -66,6 +72,7 @@ final class CarbonHotkeyManager {
         }
     }
 
+    /// Registers one Carbon hotkey and stores its action mapping.
     private func registerOne(definition: HotkeyDefinition, action: HotkeyAction) {
         let id = nextID
         nextID &+= 1
@@ -89,6 +96,7 @@ final class CarbonHotkeyManager {
         actionByID[id] = action
     }
 
+    /// Unregisters all Carbon hotkeys currently owned by this manager.
     private func unregisterAll() {
         for (_, ref) in hotKeyRefs {
             UnregisterEventHotKey(ref)
@@ -97,11 +105,13 @@ final class CarbonHotkeyManager {
         actionByID.removeAll()
     }
 
+    /// Dispatches a Carbon hotkey ID to the configured app action callback.
     fileprivate func dispatch(id: UInt32) {
         guard let action = actionByID[id] else { return }
         onAction?(action)
     }
 
+    /// Converts app-level modifier flags to Carbon modifier flags.
     private func carbonModifiers(_ mask: HotkeyDefinition.ModifierMask) -> UInt32 {
         var result: UInt32 = 0
         if mask.contains(.command) { result |= UInt32(cmdKey) }
@@ -111,6 +121,7 @@ final class CarbonHotkeyManager {
         return result
     }
 
+    /// Carbon callback that extracts the hotkey ID and hops back to the main actor.
     private static let handlerCallback: EventHandlerUPP = { _, eventOpt, userDataOpt in
         guard let event = eventOpt, let userDataOpt else { return OSStatus(eventNotHandledErr) }
         var hotKeyID = EventHotKeyID()

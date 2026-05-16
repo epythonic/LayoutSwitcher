@@ -5,50 +5,48 @@ import Testing
 @MainActor
 struct SecureInputObserverTests {
     @Test func startPollsImmediatelyAndPublishesChange() {
-        var changes: [Bool] = []
-        let observer = SecureInputObserver(
+        let state = TestState()
+        let observer = makeObserver(
             secureInputStatusProvider: { true },
             pollingTimerFactory: { _, _ in FakePollToken() }
         )
-        observer.onChange = { changes.append($0) }
+        observer.onChange = { state.changes.append($0) }
 
         observer.start()
 
         #expect(observer.isSecureInputEnabled)
-        #expect(changes == [true])
+        #expect(state.changes == [true])
     }
 
     @Test func timerTickPublishesOnlyStateChanges() {
-        var secureInputEnabled = false
-        var tick: (@MainActor () -> Void)?
-        var changes: [Bool] = []
-        let observer = SecureInputObserver(
-            secureInputStatusProvider: { secureInputEnabled },
+        let state = TestState()
+        let observer = makeObserver(
+            secureInputStatusProvider: { state.secureInputEnabled },
             pollingTimerFactory: { _, refresh in
-                tick = refresh
+                state.tick = refresh
                 return FakePollToken()
             }
         )
-        observer.onChange = { changes.append($0) }
+        observer.onChange = { state.changes.append($0) }
 
         observer.start()
-        tick?()
-        secureInputEnabled = true
-        tick?()
-        tick?()
-        secureInputEnabled = false
-        tick?()
+        state.tick?()
+        state.secureInputEnabled = true
+        state.tick?()
+        state.tick?()
+        state.secureInputEnabled = false
+        state.tick?()
 
-        #expect(changes == [true, false])
+        #expect(state.changes == [true, false])
     }
 
     @Test func startAndStopAreIdempotent() {
-        var factoryCallCount = 0
+        let state = TestState()
         let token = FakePollToken()
-        let observer = SecureInputObserver(
+        let observer = makeObserver(
             secureInputStatusProvider: { false },
             pollingTimerFactory: { _, _ in
-                factoryCallCount += 1
+                state.factoryCallCount += 1
                 return token
             }
         )
@@ -58,8 +56,50 @@ struct SecureInputObserverTests {
         observer.stop()
         observer.stop()
 
-        #expect(factoryCallCount == 1)
+        #expect(state.factoryCallCount == 1)
         #expect(token.invalidateCount == 1)
+    }
+
+    @Test func startAfterStopCreatesNewPollingToken() {
+        let state = TestState()
+        let firstToken = FakePollToken()
+        let secondToken = FakePollToken()
+        let observer = makeObserver(
+            secureInputStatusProvider: { false },
+            pollingTimerFactory: { _, _ in
+                state.factoryCallCount += 1
+                return state.factoryCallCount == 1 ? firstToken : secondToken
+            }
+        )
+
+        observer.start()
+        observer.stop()
+        observer.start()
+        observer.stop()
+
+        #expect(state.factoryCallCount == 2)
+        #expect(firstToken.invalidateCount == 1)
+        #expect(secondToken.invalidateCount == 1)
+    }
+
+    private func makeObserver(
+        interval: TimeInterval = 1.5,
+        secureInputStatusProvider: @escaping SecureInputObserver.SecureInputStatusProvider = { false },
+        pollingTimerFactory: @escaping SecureInputObserver.PollingTimerFactory = { _, _ in FakePollToken() }
+    ) -> SecureInputObserver {
+        SecureInputObserver(
+            interval: interval,
+            secureInputStatusProvider: secureInputStatusProvider,
+            pollingTimerFactory: pollingTimerFactory
+        )
+    }
+
+    @MainActor
+    private final class TestState {
+        var secureInputEnabled = false
+        var changes: [Bool] = []
+        var factoryCallCount = 0
+        var tick: (@MainActor () -> Void)?
     }
 
     @MainActor

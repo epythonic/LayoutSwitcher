@@ -19,6 +19,9 @@ final class ManualActionsCoordinator {
     private let committedHistoryProvider: () -> [CommittedWord]
     private let now: @MainActor () -> Date
     weak var appState: AppState?
+    private var currentDetectionThresholds: DetectionThresholds {
+        appState?.detectionSensitivity.thresholds ?? detector.thresholds
+    }
 
     /// Wires all collaborators. `committedHistoryProvider` is a closure so the
     /// coordinator can read the most recent history without owning it.
@@ -32,7 +35,7 @@ final class ManualActionsCoordinator {
         retypeDispatcher: RetypeDispatcher,
         tunables: PipelineTunables,
         committedHistoryProvider: @escaping () -> [CommittedWord],
-        now: @escaping @MainActor () -> Date = Date.init
+        now: @escaping @MainActor () -> Date
     ) {
         self.detector = detector
         self.retyper = retyper
@@ -65,7 +68,13 @@ final class ManualActionsCoordinator {
             buffer: word.characters,
             activeLanguage: activeLanguage,
             autoAddRomanianDiacritics: appState?.autoAddRomanianDiacritics == true,
-            correctSingleCharacterWords: appState?.correctSingleCharacterWords == true
+            autoAddRussianYo: appState?.autoAddRussianYo == true,
+            correctDoubleCapitals: appState?.correctDoubleCapitals == true,
+            correctDuplicateLetters: appState?.correctDuplicateLetters == true,
+            correctCommonTypos: appState?.correctCommonTypos == true,
+            correctSingleCharacterWords: appState?.correctSingleCharacterWords == true,
+            allowedTargetLanguages: allowedCrossLayoutTargets(from: activeLanguage),
+            thresholds: currentDetectionThresholds
         )
         switch decision {
         case .keep:
@@ -75,7 +84,10 @@ final class ManualActionsCoordinator {
                 format: String(localized: "pipeline.result.ambiguous"),
                 reason
             )
-        case .switchAndRetype(let corrected, let target):
+        case .switchAndRetype(_, _), .switchAndRetypeWithFeedback(_, _, _):
+            guard let payload = decision.retypePayload else { return }
+            let corrected = payload.corrected
+            let target = payload.target
             guard !retypeDispatcher.isRetyping else { return }
             Self.logger.info("force-retype: \"\(word.text, privacy: .public)\" → \"\(corrected, privacy: .public)\" target=\(target.rawValue, privacy: .public)")
             retypeDispatcher.setRetypingFlag(true)
@@ -131,10 +143,19 @@ final class ManualActionsCoordinator {
                 buffer: word.characters,
                 activeLanguage: activeLanguage,
                 autoAddRomanianDiacritics: appState?.autoAddRomanianDiacritics == true,
-                correctSingleCharacterWords: true
+                autoAddRussianYo: appState?.autoAddRussianYo == true,
+                correctDoubleCapitals: appState?.correctDoubleCapitals == true,
+                correctDuplicateLetters: appState?.correctDuplicateLetters == true,
+                correctCommonTypos: appState?.correctCommonTypos == true,
+                correctSingleCharacterWords: true,
+                allowedTargetLanguages: allowedCrossLayoutTargets(from: activeLanguage),
+                thresholds: currentDetectionThresholds
             )
             switch decision {
-            case .switchAndRetype(let corrected, let target):
+            case .switchAndRetype(_, _), .switchAndRetypeWithFeedback(_, _, _):
+                guard let payload = decision.retypePayload else { continue }
+                let corrected = payload.corrected
+                let target = payload.target
                 if let current = runTarget, current != target {
                     run.removeAll()
                 }
@@ -145,7 +166,8 @@ final class ManualActionsCoordinator {
                     activeLanguage: activeLanguage,
                     targetLanguage: target,
                     corrected: corrected,
-                    originalText: originalText
+                    originalText: originalText,
+                    correctionKind: payload.kind
                 ))
             case .keep, .ambiguous:
                 run.removeAll()
@@ -168,6 +190,13 @@ final class ManualActionsCoordinator {
         recents.entries.contains { entry in
             abs(entry.timestamp.timeIntervalSince(word.committedAt)) < tunables.wasAutoSwitchedMatchWindow
         }
+    }
+
+    private func allowedCrossLayoutTargets(from sourceLanguage: LanguageID) -> Set<LanguageID>? {
+        guard let configuredTargets = appState?.enabledCrossLayoutTargets(from: sourceLanguage) else {
+            return nil
+        }
+        return configuredTargets.intersection(inputSources.enabledLayoutLanguages())
     }
 
     /// Walks `committedHistory` backwards collecting words that belong to the

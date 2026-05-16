@@ -5,8 +5,11 @@ import Testing
 
 @MainActor
 struct SmartPasteTests {
-    private func makePaste(clipboard: String?, capture: PasteCapture) -> SmartPaste {
-        let inputSources = FakeInputSources.defaultRuEn()
+    private func makePaste(
+        clipboard: String?,
+        inputSources: FakeInputSources = FakeInputSources.defaultRuEn(),
+        capture: PasteCapture
+    ) -> SmartPaste {
         capture.clipboard = clipboard
         return SmartPaste(
             inputSources: inputSources,
@@ -14,7 +17,9 @@ struct SmartPasteTests {
             postKeyEvent: { keyCode, flags in
                 capture.postedKeys.append((keyCode, flags))
             },
-            sleep: { _ in }
+            sleep: { duration in
+                capture.sleepDurations.append(duration)
+            }
         )
     }
 
@@ -30,11 +35,17 @@ struct SmartPasteTests {
         let capture = PasteCapture()
         let paste = makePaste(clipboard: "привет", capture: capture)
         let result = await paste.paste()
+        let isPasted: Bool
+        let pastedLanguage: LanguageID?
         if case .pasted(let lang, _) = result {
-            #expect(lang == .ru)
+            isPasted = true
+            pastedLanguage = lang
         } else {
-            Issue.record("expected .pasted, got \(result)")
+            isPasted = false
+            pastedLanguage = nil
         }
+        #expect(isPasted)
+        #expect(pastedLanguage == .ru)
         #expect(capture.postedKeys.contains(where: { $0.keyCode == 9 && $0.flags.contains(.maskCommand) }))
     }
 
@@ -42,33 +53,81 @@ struct SmartPasteTests {
         let capture = PasteCapture()
         let paste = makePaste(clipboard: "hello world", capture: capture)
         let result = await paste.paste()
+        let isPasted: Bool
+        let pastedLanguage: LanguageID?
         if case .pasted(let lang, _) = result {
-            #expect(lang == .en)
+            isPasted = true
+            pastedLanguage = lang
         } else {
-            Issue.record("expected .pasted, got \(result)")
+            isPasted = false
+            pastedLanguage = nil
         }
+        #expect(isPasted)
+        #expect(pastedLanguage == .en)
+    }
+
+    @Test func englishClipboardAlreadyCurrentDoesNotSwitchLayout() async {
+        let capture = PasteCapture()
+        let inputSources = FakeInputSources.defaultRuEn(currentID: "com.apple.keylayout.ABC")
+        let paste = makePaste(clipboard: "hello", inputSources: inputSources, capture: capture)
+        let result = await paste.paste()
+
+        #expect(result == .pasted(language: .en, layoutSwitched: false))
+        #expect(inputSources.selectedHistory.isEmpty)
+        #expect(inputSources.refreshCount == 0)
+        #expect(capture.sleepDurations == [20_000_000])
+        #expect(capture.postedKeys.count == 1)
+        #expect(capture.postedKeys.first?.keyCode == 9)
+        #expect(capture.postedKeys.first?.flags.contains(.maskCommand) == true)
+    }
+
+    @Test func russianClipboardSwitchesLayoutBeforePostingPaste() async {
+        let capture = PasteCapture()
+        let inputSources = FakeInputSources.defaultRuEn(currentID: "com.apple.keylayout.ABC")
+        let paste = makePaste(clipboard: "привет", inputSources: inputSources, capture: capture)
+        let result = await paste.paste()
+
+        #expect(result == .pasted(language: .ru, layoutSwitched: true))
+        #expect(inputSources.selectedHistory == ["com.apple.keylayout.RussianWin"])
+        #expect(inputSources.refreshCount == 1)
+        #expect(capture.sleepDurations == [40_000_000, 20_000_000])
+        #expect(capture.postedKeys.count == 1)
+        #expect(capture.postedKeys.first?.keyCode == 9)
+        #expect(capture.postedKeys.first?.flags.contains(.maskCommand) == true)
     }
 
     @Test func ukrainianGlyphSelectsUkrainianTarget() async {
         let capture = PasteCapture()
         let paste = makePaste(clipboard: "привіт", capture: capture)
         let result = await paste.paste()
+        let isPasted: Bool
+        let pastedLanguage: LanguageID?
         if case .pasted(let lang, _) = result {
-            #expect(lang == .uk)
+            isPasted = true
+            pastedLanguage = lang
         } else {
-            Issue.record("expected .pasted, got \(result)")
+            isPasted = false
+            pastedLanguage = nil
         }
+        #expect(isPasted)
+        #expect(pastedLanguage == .uk)
     }
 
     @Test func romanianDiacriticSelectsRomanianTarget() async {
         let capture = PasteCapture()
         let paste = makePaste(clipboard: "bună", capture: capture)
         let result = await paste.paste()
+        let isPasted: Bool
+        let pastedLanguage: LanguageID?
         if case .pasted(let lang, _) = result {
-            #expect(lang == .ro)
+            isPasted = true
+            pastedLanguage = lang
         } else {
-            Issue.record("expected .pasted, got \(result)")
+            isPasted = false
+            pastedLanguage = nil
         }
+        #expect(isPasted)
+        #expect(pastedLanguage == .ro)
     }
 
     @Test func longClipboardReturnsTooLong() async {
@@ -85,4 +144,5 @@ struct SmartPasteTests {
 private final class PasteCapture {
     var clipboard: String?
     var postedKeys: [(keyCode: CGKeyCode, flags: CGEventFlags)] = []
+    var sleepDurations: [UInt64] = []
 }

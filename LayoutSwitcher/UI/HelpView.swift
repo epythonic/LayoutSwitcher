@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Split-view help browser for static in-app documentation content.
 struct HelpView: View {
+    /// Selected help section ID in the sidebar list.
     @State private var selectedSectionID: String = HelpContent.sections.first?.id ?? ""
 
     /// Currently selected section with fallback to first section for safety.

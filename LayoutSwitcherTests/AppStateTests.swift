@@ -4,76 +4,140 @@ import Testing
 
 @MainActor
 struct AppStateTests {
-    private static func makeDefaults(_ testName: String = #function) -> UserDefaults? {
+    private static func makeDefaults(_ testName: String = #function) throws -> UserDefaults {
         let suiteName = "LayoutSwitcherTests.AppState.\(testName)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            Issue.record("Could not create test UserDefaults suite")
-            return nil
-        }
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
 
-    @Test func romanianDiacriticsSettingPersistsAcrossInstances() {
-        let suiteName = "LayoutSwitcherTests.AppState.romanianDiacriticsSettingPersistsAcrossInstances"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            Issue.record("Could not create test UserDefaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-
-        let first = AppState(defaults: defaults)
+    @Test func romanianDiacriticsSettingPersistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
         #expect(!first.autoAddRomanianDiacritics)
 
         first.autoAddRomanianDiacritics = true
 
-        let second = AppState(defaults: defaults)
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
         #expect(second.autoAddRomanianDiacritics)
 
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
-    @Test func detectionSensitivityPersistsAcrossInstances() {
-        let suiteName = "LayoutSwitcherTests.AppState.detectionSensitivityPersistsAcrossInstances"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            Issue.record("Could not create test UserDefaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-
-        let first = AppState(defaults: defaults)
+    @Test func detectionSensitivityPersistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
         #expect(first.detectionSensitivity == .balanced)
 
         first.detectionSensitivity = .aggressive
 
-        let second = AppState(defaults: defaults)
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
         #expect(second.detectionSensitivity == .aggressive)
 
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
-    @Test func snoozeDurationPersistsAndClamps() {
-        let suiteName = "LayoutSwitcherTests.AppState.snoozeDurationPersistsAndClamps"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            Issue.record("Could not create test UserDefaults suite")
-            return
-        }
-        defaults.removePersistentDomain(forName: suiteName)
+    @Test func duplicateLetterCorrectionSettingPersistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(!first.correctDuplicateLetters)
 
+        first.correctDuplicateLetters = true
+
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(second.correctDuplicateLetters)
+    }
+
+    @Test func doubleCapitalCorrectionSettingPersistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(!first.correctDoubleCapitals)
+
+        first.correctDoubleCapitals = true
+
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(second.correctDoubleCapitals)
+    }
+
+    @Test func russianYoSettingPersistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(!first.autoAddRussianYo)
+
+        first.autoAddRussianYo = true
+
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(second.autoAddRussianYo)
+    }
+
+    @Test func commonTypoCorrectionSettingPersistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(!first.correctCommonTypos)
+
+        first.correctCommonTypos = true
+
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(second.correctCommonTypos)
+    }
+
+    @Test func activeLanguagePairDefaultsToRussianEnglishOnly() throws {
+        let defaults = try Self.makeDefaults()
+        let state = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+
+        #expect(state.activeLanguagePair == .ruEn)
+        #expect(state.enabledLanguageDirections == Set(LanguageDirection.allCases))
+        #expect(state.isLanguageDirectionEnabled(source: .en, target: .ru))
+        #expect(!state.isLanguageDirectionEnabled(source: .en, target: .uk))
+        #expect(!state.isLanguageDirectionEnabled(source: .en, target: .ro))
+        #expect(state.enabledCrossLayoutTargets(from: .en) == Set([.ru]))
+    }
+
+    @Test func activeLanguagePairPersistsAcrossInstances() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+
+        first.setActiveLanguagePair(.roEn)
+
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+
+        #expect(second.activeLanguagePair == .roEn)
+        #expect(second.isLanguageDirectionEnabled(source: .en, target: .ro))
+        #expect(second.isLanguageDirectionEnabled(source: .ro, target: .en))
+        #expect(!second.isLanguageDirectionEnabled(source: .en, target: .ru))
+        #expect(second.enabledCrossLayoutTargets(from: .en) == Set([.ro]))
+    }
+
+    @Test func languageDirectionsPersistWithinActivePair() throws {
+        let defaults = try Self.makeDefaults()
+        let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        first.setLanguageDirection(.enToRu, isEnabled: false)
+        first.setLanguageDirection(.roToEn, isEnabled: false)
+        first.setActiveLanguagePair(.roEn)
+
+        let second = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+
+        #expect(second.activeLanguagePair == .roEn)
+        #expect(!second.isLanguageDirectionEnabled(source: .en, target: .ru))
+        #expect(!second.isLanguageDirectionEnabled(source: .ro, target: .en))
+        #expect(second.isLanguageDirectionEnabled(source: .en, target: .ro))
+        #expect(!second.isLanguageDirectionEnabled(source: .ru, target: .en))
+        #expect(second.isLanguageDirectionEnabled(source: .en, target: .en))
+    }
+
+    @Test func snoozeDurationPersistsAndClamps() throws {
+        let defaults = try Self.makeDefaults()
         defaults.set(999, forKey: "settings.snoozeDurationMinutes")
-        let invalid = AppState(defaults: defaults)
+        let invalid = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
         #expect(invalid.snoozeDuration == .fiveMinutes)
 
         invalid.snoozeDuration = .sixtyMinutes
-        let restored = AppState(defaults: defaults)
+        let restored = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
         #expect(restored.snoozeDuration == .sixtyMinutes)
 
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
-    @Test func activeSnoozeRemainingClearsExpiredPause() {
+    @Test func activeSnoozeRemainingClearsExpiredPause() throws {
         var now = Date(timeIntervalSince1970: 1_000)
-        guard let defaults = Self.makeDefaults() else { return }
+        let defaults = try Self.makeDefaults()
         let state = AppState(defaults: defaults, now: { now })
         state.snoozeDuration = .fiveMinutes
         state.startSnooze()

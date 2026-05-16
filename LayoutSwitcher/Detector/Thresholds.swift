@@ -16,6 +16,18 @@ struct DetectionThresholds: Sendable {
     var naturalLanguageMinimumConfidence: Double = 0.45
     /// Minimum NaturalLanguage probability gap required between two candidates.
     var naturalLanguageTieBreakMargin: Double = 0.15
+    /// Minimum corrected length for accidental duplicate-letter correction.
+    var duplicateLetterMinCorrectedLength: Int = 4
+    /// Minimum n-gram score gain required before dropping a repeated letter.
+    var duplicateLetterScoreMargin: Double = 0.05
+    /// Minimum token length eligible for two-leading-uppercase correction.
+    var doubleCapitalMinLength: Int = 3
+    /// Minimum token length eligible for Cupertino-style spelling correction.
+    var cupertinoMinLength: Int = 3
+    /// Maximum edit distance accepted for Cupertino-style spelling correction.
+    var cupertinoMaxEditDistance: Int = 2
+    /// Minimum n-gram score gain required before accepting a spelling suggestion.
+    var cupertinoScoreMargin: Double = 0.05
 
     /// Baseline thresholds used when no explicit sensitivity override is set.
     nonisolated static let `default` = DetectionThresholds()

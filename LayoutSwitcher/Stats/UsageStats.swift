@@ -22,7 +22,7 @@ final class UsageStats {
     private let now: @MainActor () -> Date
 
     /// Loads persisted counters and applies day rollover if needed.
-    init(defaults: UserDefaults = .standard, now: @escaping @MainActor () -> Date = Date.init) {
+    init(defaults: UserDefaults, now: @escaping @MainActor () -> Date) {
         self.defaults = defaults
         self.now = now
         let d = defaults

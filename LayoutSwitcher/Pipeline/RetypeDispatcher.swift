@@ -4,17 +4,27 @@ import os
 /// Cooldown record keyed by `(kind, original, corrected, source, target, bundleID)` used to
 /// suppress retype storms when the user keeps typing the same word.
 struct AutoSwitchCooldownEntry: Sendable {
+    /// Distinguishes single-token and multi-token cooldown scopes.
     enum Kind: Sendable {
+        /// Cooldown for one committed word.
         case single
+        /// Cooldown for a coalesced multi-word retype sequence.
         case sequence
     }
 
+    /// Cooldown scope.
     let kind: Kind
+    /// Original text before correction.
     let original: String
+    /// Corrected text emitted by the detector.
     let corrected: String
+    /// Language active when the original text was committed.
     let sourceLanguage: LanguageID
+    /// Language selected for the correction.
     let targetLanguage: LanguageID
+    /// Bundle identifier the cooldown applies to, when known.
     let bundleID: String?
+    /// Expiration date after which an identical correction may run again.
     let expiresAt: Date
 }
 
@@ -33,8 +43,11 @@ final class RetypeDispatcher {
     private let soundFeedback: SoundFeedbackPlayer?
     private let visualFeedback: VisualFeedbackPlayer?
     private let tunables: PipelineTunables
+    private let bundleNameProvider: @MainActor (String) -> String?
     private let now: @MainActor () -> Date
+    /// Shared application state used to honor snooze suppression.
     weak var appState: AppState?
+    /// Hotkey coordinator that receives undo records after successful retypes.
     weak var hotkeyCoordinator: HotkeyCoordinator?
 
     /// True while a retype Task is in flight. Pipeline reads this to skip re-entry.
@@ -49,8 +62,9 @@ final class RetypeDispatcher {
         notificationManager: NotificationManager? = nil,
         soundFeedback: SoundFeedbackPlayer? = nil,
         visualFeedback: VisualFeedbackPlayer? = nil,
-        tunables: PipelineTunables = .default,
-        now: @escaping @MainActor () -> Date = Date.init
+        tunables: PipelineTunables,
+        bundleNameProvider: @escaping @MainActor (String) -> String? = { _ in nil },
+        now: @escaping @MainActor () -> Date
     ) {
         self.retyper = retyper
         self.stats = stats
@@ -59,6 +73,7 @@ final class RetypeDispatcher {
         self.soundFeedback = soundFeedback
         self.visualFeedback = visualFeedback
         self.tunables = tunables
+        self.bundleNameProvider = bundleNameProvider
         self.now = now
     }
 
@@ -131,7 +146,8 @@ final class RetypeDispatcher {
                 original: candidate.originalText,
                 corrected: candidate.corrected,
                 bundleID: word.bundleID,
-                cooldownKind: .single
+                cooldownKind: .single,
+                correctionKind: candidate.correctionKind
             )
         }
     }
@@ -141,6 +157,7 @@ final class RetypeDispatcher {
 
         let originalText = candidates.map(\.originalText).joined(separator: " ")
         let correctedText = candidates.map(\.corrected).joined(separator: " ")
+        let correctionKind = Self.sequenceCorrectionKind(candidates)
         let originalCharacters = sequenceOriginalCharacters(from: candidates)
         guard !isSuppressedByCooldown(
             kind: .sequence,
@@ -183,7 +200,8 @@ final class RetypeDispatcher {
                 original: originalText,
                 corrected: correctedText,
                 bundleID: last.word.bundleID,
-                cooldownKind: .sequence
+                cooldownKind: .sequence,
+                correctionKind: correctionKind
             )
         }
     }
@@ -194,7 +212,8 @@ final class RetypeDispatcher {
         original: String,
         corrected: String,
         bundleID: String?,
-        cooldownKind: AutoSwitchCooldownEntry.Kind
+        cooldownKind: AutoSwitchCooldownEntry.Kind,
+        correctionKind: CorrectionFeedbackKind
     ) {
         guard result.succeeded else {
             if case .failure(.missingRomanianLayout) = result {
@@ -212,24 +231,34 @@ final class RetypeDispatcher {
         )
         hotkeyCoordinator?.lastAutoSwitch = record
         stats.recordAutoSwitch(charactersSaved: corrected.count)
-        recents.record(RecentSwitchEntry(
+        recents.record(
             original: original,
             corrected: corrected,
             bundleID: bundleID,
-            bundleName: bundleID.flatMap(ExclusionList.localizedName(for:)),
+            bundleName: bundleID.flatMap { bundleNameProvider($0) },
             kind: .auto,
             timestamp: now()
-        ))
+        )
         notificationManager?.postAutoSwitchNotification(
             original: original,
             corrected: corrected
         )
         guard let state = appState else { return }
+        state.lastActionDescription = correctionKind.localizedSummary(
+            original: original,
+            corrected: corrected
+        )
         soundFeedback?.play(
-            kind: state.soundFeedbackKind,
+            kind: correctionKind,
             isEnabled: state.soundFeedbackEnabled
         )
-        visualFeedback?.flash(isEnabled: state.visualFeedbackEnabled)
+        visualFeedback?.flash(kind: correctionKind, isEnabled: state.visualFeedbackEnabled)
+    }
+
+    private static func sequenceCorrectionKind(_ candidates: [PendingRetypeCandidate]) -> CorrectionFeedbackKind {
+        guard let first = candidates.first else { return .layoutSwitch }
+        let allSameKind = candidates.dropFirst().allSatisfy { $0.correctionKind == first.correctionKind }
+        return allSameKind ? first.correctionKind : .layoutSwitch
     }
 
     /// Stitches per-candidate `[WordChar]` buffers with `" "` separator chars between them

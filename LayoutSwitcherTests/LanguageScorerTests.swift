@@ -55,7 +55,10 @@ struct LanguageScorerTests {
     }
 
     @Test func naturalLanguageScorerRespectsMinimumTextLength() {
-        let scorer = NaturalLanguageScorer(minimumTextLength: 100)
+        let scorer = NaturalLanguageScorer(
+            minimumTextLength: 100,
+            maximumHypotheses: LanguageID.allCases.count
+        )
 
         #expect(scorer.naturalLanguageProbability("hello", language: .en) == nil)
         #expect(scorer.score("hello", language: .en).nGramScore == 0)
@@ -65,7 +68,10 @@ struct LanguageScorerTests {
         let ngrams: [LanguageID: NGramModel] = [.en: NGramModels.english()]
         let scorer = HybridLanguageScorer(
             nGramScorer: NGramLanguageScorer(ngrams: ngrams),
-            naturalLanguageScorer: NaturalLanguageScorer(minimumTextLength: 100)
+            naturalLanguageScorer: NaturalLanguageScorer(
+                minimumTextLength: 100,
+                maximumHypotheses: LanguageID.allCases.count
+            )
         )
 
         let score = scorer.score("hello", language: .en)
@@ -74,12 +80,13 @@ struct LanguageScorerTests {
         #expect(score.nGramScore == ngrams[.en]?.score("hello"))
     }
 
-    @Test func tieBreakRankPrefersCyrillicThenRomanianThenEnglish() {
+    @Test func tieBreakRankPrefersCyrillicThenRomanianThenEnglish() throws {
         let rank = LayoutDetector.tieBreakRank
-        guard let ru = rank[.ru], let uk = rank[.uk], let ro = rank[.ro], let en = rank[.en] else {
-            Issue.record("tieBreakRank missing entry")
-            return
-        }
+        let ru = try #require(rank[.ru])
+        let uk = try #require(rank[.uk])
+        let ro = try #require(rank[.ro])
+        let en = try #require(rank[.en])
+
         #expect(ru < uk)
         #expect(uk < ro)
         #expect(ro < en)
@@ -202,7 +209,8 @@ struct LanguageScorerTests {
                 .uk: NGramModel(language: .uk, corpus: []),
                 .ro: NGramModel(language: .ro, corpus: [])
             ],
-            languageScorer: StubLanguageScorer(scores: scores)
+            languageScorer: StubLanguageScorer(scores: scores),
+            thresholds: .default
         )
     }
 }

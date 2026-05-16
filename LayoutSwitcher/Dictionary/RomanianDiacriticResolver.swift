@@ -67,3 +67,64 @@ struct RomanianDiacriticResolver: Sendable {
         return variantFirst.uppercased() + String(lower.dropFirst())
     }
 }
+
+/// Main-actor cache for Romanian diacritic resolver indexes.
+///
+/// Reuses the expensive embedded dictionary index until the user dictionary words change.
+@MainActor
+final class RomanianDiacriticResolverCache {
+    private struct Snapshot {
+        let userWords: Set<String>
+        let resolver: RomanianDiacriticResolver
+        let plainOverrides: Set<String>
+    }
+
+    private let embeddedWords: Set<String>
+    private let buildResolver: @MainActor (Set<String>) -> RomanianDiacriticResolver
+    private var snapshot: Snapshot
+
+    init(
+        embeddedWords: Set<String> = Set(EmbeddedDictionaries.romanian().allWords),
+        buildResolver: @escaping @MainActor (Set<String>) -> RomanianDiacriticResolver = {
+            RomanianDiacriticResolver(words: $0)
+        }
+    ) {
+        self.embeddedWords = embeddedWords
+        self.buildResolver = buildResolver
+        self.snapshot = Snapshot(
+            userWords: [],
+            resolver: buildResolver(embeddedWords),
+            plainOverrides: []
+        )
+    }
+
+    /// Returns a cached resolver and rebuilds it only when user words change.
+    func resolver(userWords: Set<String>) -> RomanianDiacriticResolver {
+        snapshot(for: userWords).resolver
+    }
+
+    /// Returns cached plain user words that should suppress diacritic replacement.
+    func plainOverrides(userWords: Set<String>) -> Set<String> {
+        snapshot(for: userWords).plainOverrides
+    }
+
+    private func snapshot(for userWords: Set<String>) -> Snapshot {
+        let normalizedUserWords = Self.normalized(userWords)
+        guard normalizedUserWords != snapshot.userWords else {
+            return snapshot
+        }
+        let newSnapshot = Snapshot(
+            userWords: normalizedUserWords,
+            resolver: buildResolver(embeddedWords.union(normalizedUserWords)),
+            plainOverrides: Set(normalizedUserWords.filter {
+                !RomanianDiacriticResolver.containsRomanianDiacritic($0)
+            })
+        )
+        snapshot = newSnapshot
+        return newSnapshot
+    }
+
+    private static func normalized(_ words: Set<String>) -> Set<String> {
+        Set(words.map { InMemoryDictionary.normalize($0) }.filter { !$0.isEmpty })
+    }
+}

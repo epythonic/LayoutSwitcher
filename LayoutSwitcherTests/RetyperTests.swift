@@ -12,7 +12,6 @@ struct RetyperTests {
 
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: InputSourceManager(),
             enabledLayoutsProvider: { [] },
             currentLayoutIDProvider: { "com.apple.keylayout.ABC" },
             refreshCurrentLayout: {},
@@ -22,7 +21,8 @@ struct RetyperTests {
             },
             sleep: { _ in },
             postKeyEvent: { keyCode, _ in postedKeys.append(keyCode) },
-            postUnicodeEvent: { postedUnicode.append($0) }
+            postUnicodeEvent: { postedUnicode.append($0) },
+            capsLockGuard: Self.inertCapsLockGuard()
         )
 
         let succeeded = await retyper.retype(
@@ -44,7 +44,6 @@ struct RetyperTests {
 
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: InputSourceManager(),
             enabledLayoutsProvider: {
                 [RetypeInputSource(id: "com.apple.keylayout.RussianWin", primaryLanguage: "ru")]
             },
@@ -56,7 +55,8 @@ struct RetyperTests {
             },
             sleep: { _ in },
             postKeyEvent: { keyCode, _ in postedKeys.append(keyCode) },
-            postUnicodeEvent: { _ in }
+            postUnicodeEvent: { _ in },
+            capsLockGuard: Self.inertCapsLockGuard()
         )
 
         let succeeded = await retyper.retype(
@@ -86,12 +86,16 @@ struct RetyperTests {
 
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: sources,
+            enabledLayoutsProvider: {
+                sources.enabledLayouts().map(RetypeInputSource.init)
+            },
             currentLayoutIDProvider: { "com.apple.keylayout.Romanian-Standard" },
             refreshCurrentLayout: {},
+            selectLayout: { _ in noErr },
             sleep: { _ in },
             postKeyEvent: { keyCode, flags in posted.append((keyCode, flags)) },
-            postUnicodeEvent: { postedUnicode.append($0) }
+            postUnicodeEvent: { postedUnicode.append($0) },
+            capsLockGuard: Self.inertCapsLockGuard()
         )
 
         let succeeded = await retyper.retype(
@@ -113,7 +117,6 @@ struct RetyperTests {
 
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: InputSourceManager(),
             enabledLayoutsProvider: {
                 [RetypeInputSource(id: "com.apple.keylayout.ABC", primaryLanguage: "en")]
             },
@@ -125,7 +128,8 @@ struct RetyperTests {
             },
             sleep: { _ in },
             postKeyEvent: { keyCode, _ in postedKeys.append(keyCode) },
-            postUnicodeEvent: { _ in }
+            postUnicodeEvent: { _ in },
+            capsLockGuard: Self.inertCapsLockGuard()
         )
 
         let succeeded = await retyper.retype(
@@ -143,15 +147,16 @@ struct RetyperTests {
     @Test func romanianDiacriticsReturnMissingRomanianLayoutReason() async {
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: InputSourceManager(),
             enabledLayoutsProvider: {
                 [RetypeInputSource(id: "com.apple.keylayout.ABC", primaryLanguage: "en")]
             },
             currentLayoutIDProvider: { "com.apple.keylayout.ABC" },
             refreshCurrentLayout: {},
+            selectLayout: { _ in noErr },
             sleep: { _ in },
             postKeyEvent: { _, _ in },
-            postUnicodeEvent: { _ in }
+            postUnicodeEvent: { _ in },
+            capsLockGuard: Self.inertCapsLockGuard()
         )
 
         let result = await retyper.retypeResult(
@@ -170,15 +175,16 @@ struct RetyperTests {
 
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: InputSourceManager(),
             enabledLayoutsProvider: {
                 [RetypeInputSource(id: "com.apple.keylayout.RussianWin", primaryLanguage: "ru")]
             },
             currentLayoutIDProvider: { "com.apple.keylayout.RussianWin" },
             refreshCurrentLayout: {},
+            selectLayout: { _ in noErr },
             sleep: { _ in },
             postKeyEvent: { keyCode, flags in posted.append((keyCode, flags)) },
-            postUnicodeEvent: { postedUnicode.append($0) }
+            postUnicodeEvent: { postedUnicode.append($0) },
+            capsLockGuard: Self.inertCapsLockGuard()
         )
 
         let result = await retyper.retypeSequenceResult(
@@ -200,15 +206,16 @@ struct RetyperTests {
 
         let retyper = Retyper(
             mapping: RuEnQwertyMapping(),
-            inputSources: InputSourceManager(),
             enabledLayoutsProvider: {
                 [RetypeInputSource(id: "com.apple.keylayout.RussianWin", primaryLanguage: "ru")]
             },
             currentLayoutIDProvider: { "com.apple.keylayout.RussianWin" },
             refreshCurrentLayout: {},
+            selectLayout: { _ in noErr },
             sleep: { _ in },
             postKeyEvent: { keyCode, _ in postedKeys.append(keyCode) },
-            postUnicodeEvent: { postedUnicode.append($0) }
+            postUnicodeEvent: { postedUnicode.append($0) },
+            capsLockGuard: Self.inertCapsLockGuard()
         )
 
         let result = await retyper.retypeSequenceResult(
@@ -227,5 +234,12 @@ struct RetyperTests {
         keyCodes.map {
             WordChar(keyCode: $0, unicode: "", flags: [], timestamp: 0)
         }
+    }
+
+    private static func inertCapsLockGuard() -> CapsLockGuard {
+        CapsLockGuard(
+            readCapsLockState: { false },
+            setCapsLockState: { _ in true }
+        )
     }
 }

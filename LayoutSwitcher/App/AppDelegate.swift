@@ -1,53 +1,62 @@
 import AppKit
+import UserNotifications
 import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "AppDelegate")
+    private static let xctestConfigurationEnvironmentKey = "XCTestConfigurationFilePath"
+    private static let uiTestingEnvironmentKey = "LAYOUTSWITCHER_UI_TESTING"
+    private static let uiTestingOpenSettingsEnvironmentKey = "LAYOUTSWITCHER_UI_TESTING_OPEN_SETTINGS"
 
-    let appState = AppState()
-    let permission = AccessibilityPermission()
+    private static var isRunningUnitTests: Bool {
+        ProcessInfo.processInfo.environment[Self.xctestConfigurationEnvironmentKey] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }
+
+    private static var isRunningUITests: Bool {
+        ProcessInfo.processInfo.environment[Self.uiTestingEnvironmentKey] == "1"
+    }
+
+    let appState = AppState(defaults: .standard, now: Date.init)
+    let permission = AccessibilityPermission(workspace: .shared)
     let eventTap = KeyboardEventTap()
-    let wordBuffer = WordBuffer()
-    let focusedApp = FocusedAppObserver()
+    let wordBuffer = WordBuffer(now: Date.init)
+    let focusedApp = FocusedAppObserver(workspace: .shared)
     let inputSources = InputSourceManager()
-    let exclusions = ExclusionList()
-    let perAppLayouts = PerAppLayoutPreferences()
-    let stats = UsageStats()
-    let recents = RecentSwitches()
-    let presentationDetector = PresentationModeDetector()
-    let learningCache = LearningCache()
+    let exclusions = ExclusionList(defaults: .standard, workspace: .shared)
+    let perAppLayouts = PerAppLayoutPreferences(
+        defaults: .standard,
+        appNameProvider: { ExclusionList.localizedName(for: $0, workspace: .shared) }
+    )
+    let stats = UsageStats(defaults: .standard, now: Date.init)
+    let recents = RecentSwitches(defaults: .standard, makeEntryID: UUID.init)
+    let presentationDetector = PresentationModeDetector(workspace: .shared)
+    let learningCache = LearningCache(defaults: .standard, now: Date.init, makeEntryID: UUID.init)
     let launchAtLoginManager = LaunchAtLoginManager()
-    let notificationManager = NotificationManager()
+    let notificationManager = NotificationManager(
+        notificationCenter: .current(),
+        makeNotificationID: { UUID().uuidString },
+        notificationSound: .default
+    )
     let secureInputObserver = SecureInputObserver()
     private let onboardingCompletionStore: OnboardingCompletionStore
-    let userEnglish = UserDictionary(language: .en)
-    let userRussian = UserDictionary(language: .ru)
-    let userUkrainian = UserDictionary(language: .uk)
-    let userRomanian = UserDictionary(language: .ro)
+    let userEnglish = UserDictionary(language: .en, fileManager: .default)
+    let userRussian = UserDictionary(language: .ru, fileManager: .default)
+    let userUkrainian = UserDictionary(language: .uk, fileManager: .default)
+    let userRomanian = UserDictionary(language: .ro, fileManager: .default)
     private(set) lazy var detector: LayoutDetector = LayoutDetector.defaultMultilingual(
         userEnglish: userEnglish,
         userRussian: userRussian,
         userUkrainian: userUkrainian,
-        userRomanian: userRomanian
+        userRomanian: userRomanian,
+        systemSpellChecker: NSSpellChecker.shared,
+        thresholds: .default
     )
-    private(set) lazy var retyper: Retyper = Retyper(mapping: detector.mapping, inputSources: inputSources)
-    private(set) lazy var smartPaste: SmartPaste = SmartPaste(inputSources: inputSources)
-    private(set) lazy var pipeline = TypingPipeline(
-        buffer: wordBuffer,
-        focused: focusedApp,
-        detector: detector,
-        retyper: retyper,
-        inputSources: inputSources,
-        learningCache: learningCache,
-        presentationDetector: presentationDetector,
-        notificationManager: notificationManager,
-        exclusions: exclusions,
-        stats: stats,
-        recents: recents,
-        perAppLayouts: perAppLayouts
-    )
-    private(set) lazy var hotkeyRegistry = HotkeyRegistry()
+    private(set) lazy var retyper: Retyper = makeRetyper()
+    private(set) lazy var smartPaste: SmartPaste = makeSmartPaste()
+    private(set) lazy var pipeline = makePipeline()
+    private(set) lazy var hotkeyRegistry = HotkeyRegistry(defaults: .standard)
     let carbonHotkeyManager = CarbonHotkeyManager()
     private(set) lazy var hotkeyCoordinator = HotkeyCoordinator(
         buffer: wordBuffer,
@@ -59,7 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState: appState,
         smartPaste: smartPaste,
         learningCache: learningCache,
-        currentBundleIDProvider: { [weak focusedApp] in focusedApp?.bundleID }
+        currentBundleIDProvider: { [weak focusedApp] in focusedApp?.bundleID },
+        bundleNameProvider: { ExclusionList.localizedName(for: $0, workspace: .shared) },
+        now: Date.init
     )
 
     var statusItemController: StatusItemController?
@@ -68,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let helpWindowController = HelpWindowController()
 
     override init() {
-        self.onboardingCompletionStore = OnboardingCompletionStore()
+        self.onboardingCompletionStore = OnboardingCompletionStore(defaults: .standard)
         super.init()
     }
 
@@ -77,7 +88,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
+    private func makeSmartPaste() -> SmartPaste {
+        SmartPaste(
+            inputSources: inputSources,
+            pasteboardRead: {
+                NSPasteboard.general.string(forType: .string)
+            },
+            postKeyEvent: { keyCode, flags in
+                SmartPaste.postKey(keyCode: keyCode, flags: flags)
+            },
+            sleep: { nanoseconds in
+                try? await Task.sleep(nanoseconds: nanoseconds)
+            }
+        )
+    }
+
+    private func makeRetyper() -> Retyper {
+        Retyper(
+            mapping: detector.mapping,
+            enabledLayoutsProvider: { [inputSources] in
+                inputSources.enabledLayouts().map { RetypeInputSource($0) }
+            },
+            currentLayoutIDProvider: { [inputSources] in
+                inputSources.current?.id
+            },
+            refreshCurrentLayout: { [inputSources] in
+                inputSources.refresh()
+            },
+            selectLayout: { [inputSources] layout in
+                guard let source = layout.source else { return OSStatus(paramErr) }
+                return inputSources.select(source)
+            },
+            sleep: { nanoseconds in
+                try? await Task.sleep(nanoseconds: nanoseconds)
+            },
+            postKeyEvent: { keyCode, flags in
+                Retyper.postKey(keyCode: keyCode, flags: flags)
+            },
+            postUnicodeEvent: { text in
+                Retyper.postUnicode(text)
+            },
+            capsLockGuard: CapsLockGuard.live()
+        )
+    }
+
+    private func makePipeline() -> TypingPipeline {
+        TypingPipeline(
+            buffer: wordBuffer,
+            focused: focusedApp,
+            detector: detector,
+            retyper: retyper,
+            inputSources: inputSources,
+            learningCache: learningCache,
+            soundFeedback: SoundFeedbackPlayer.live(),
+            visualFeedback: VisualFeedbackPlayer { [weak self] kind in
+                self?.statusItemController?.flashCorrection(kind)
+            },
+            presentationDetector: presentationDetector,
+            notificationManager: notificationManager,
+            exclusions: exclusions,
+            stats: stats,
+            recents: recents,
+            perAppLayouts: perAppLayouts,
+            tunables: .default,
+            bundleNameProvider: { ExclusionList.localizedName(for: $0, workspace: .shared) },
+            sleepBeforeSequenceFlush: { duration in
+                try? await Task.sleep(for: duration)
+            },
+            now: Date.init
+        )
+    }
+
+    private func makeSettingsWindowController() -> SettingsWindowController {
+        let helpController = self.helpWindowController
+        return SettingsWindowController(
+            appState: appState,
+            exclusions: exclusions,
+            stats: stats,
+            userEnglish: userEnglish,
+            userRussian: userRussian,
+            userUkrainian: userUkrainian,
+            userRomanian: userRomanian,
+            inputSources: inputSources,
+            hotkeys: hotkeyRegistry,
+            perAppLayouts: perAppLayouts,
+            recents: recents,
+            learningCache: learningCache,
+            launchAtLoginManager: launchAtLoginManager,
+            openHelp: { [weak helpController] in helpController?.show() }
+        )
+    }
+
+    private func launchForUITests() {
+        NSApp.setActivationPolicy(.regular)
+        appState.isAccessibilityGranted = true
+        settingsWindowController = makeSettingsWindowController()
+
+        if ProcessInfo.processInfo.environment[Self.uiTestingOpenSettingsEnvironmentKey] == "1" {
+            settingsWindowController?.show()
+        }
+
+        Self.logger.info("LayoutSwitcher UI test mode started")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Self.isRunningUITests {
+            launchForUITests()
+            return
+        }
+
+        guard !Self.isRunningUnitTests else {
+            Self.logger.info("XCTest launch detected; skipping live app startup side effects")
+            return
+        }
+
         NSApp.setActivationPolicy(.accessory)
 
         appState.isAccessibilityGranted = permission.isTrusted
@@ -149,22 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let helpController = self.helpWindowController
-        let settingsController = SettingsWindowController(
-            appState: appState,
-            exclusions: exclusions,
-            stats: stats,
-            userEnglish: userEnglish,
-            userRussian: userRussian,
-            userUkrainian: userUkrainian,
-            userRomanian: userRomanian,
-            inputSources: inputSources,
-            hotkeys: hotkeyRegistry,
-            perAppLayouts: perAppLayouts,
-            recents: recents,
-            learningCache: learningCache,
-            launchAtLoginManager: launchAtLoginManager,
-            openHelp: { [weak helpController] in helpController?.show() }
-        )
+        let settingsController = makeSettingsWindowController()
         self.settingsWindowController = settingsController
 
         let onboardingController = OnboardingWindowController(

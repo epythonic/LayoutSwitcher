@@ -8,8 +8,8 @@ struct NaturalLanguageScorer: LanguageScoring {
     let maximumHypotheses: Int
 
     init(
-        minimumTextLength: Int = DetectionThresholds.default.naturalLanguageMinWordLength,
-        maximumHypotheses: Int = LanguageID.allCases.count
+        minimumTextLength: Int,
+        maximumHypotheses: Int
     ) {
         self.minimumTextLength = minimumTextLength
         self.maximumHypotheses = maximumHypotheses

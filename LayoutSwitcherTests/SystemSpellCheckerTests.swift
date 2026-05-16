@@ -23,6 +23,15 @@ struct SystemSpellCheckerTests {
             }
             return NSRange(location: 0, length: stringToCheck.utf16.count)
         }
+
+        func guesses(
+            forWordRange range: NSRange,
+            in string: String,
+            language: String?,
+            inSpellDocumentWithTag tag: Int
+        ) -> [String]? {
+            []
+        }
     }
 
     @Test func containsKnownWord() {

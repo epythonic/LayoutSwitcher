@@ -2,11 +2,12 @@ import Foundation
 
 /// Remembers user-undone corrections so the same mistake is not auto-corrected again.
 @MainActor
-final class LearningCache {
+struct LearningCache {
     private static let key = "learning.cache.entries"
     private static let maxEntries = 50
     private let defaults: UserDefaults
     private let now: @MainActor () -> Date
+    private let makeEntryID: @MainActor () -> UUID
 
     /// One learned suppression entry.
     private struct Entry: Codable, Equatable, Sendable {
@@ -20,12 +21,19 @@ final class LearningCache {
 
     /// Public read-only representation of a learned entry for UI display.
     struct LearnedEntry: Identifiable, Equatable, Sendable {
-        let id = UUID()
+        /// Stable row identity for SwiftUI lists during one presentation.
+        let id: UUID
+        /// Physical text originally typed before correction.
         let original: String
+        /// Corrected text that the user later undid.
         let corrected: String
+        /// Source language active when the original text was typed.
         let sourceLanguage: String
+        /// Target language used for the correction.
         let targetLanguage: String
+        /// Bundle identifier where the suppression applies, when known.
         let bundleID: String?
+        /// Time when the undo was recorded.
         let timestamp: Date
     }
 
@@ -37,16 +45,22 @@ final class LearningCache {
             }
             return decoded
         }
-        set {
+        nonmutating set {
             if let data = try? JSONEncoder().encode(newValue) {
                 defaults.set(data, forKey: Self.key)
             }
         }
     }
 
-    init(defaults: UserDefaults = .standard, now: @escaping @MainActor () -> Date = Date.init) {
+    /// Creates a cache backed by injected defaults and clock.
+    init(
+        defaults: UserDefaults,
+        now: @escaping @MainActor () -> Date,
+        makeEntryID: @escaping @MainActor () -> UUID
+    ) {
         self.defaults = defaults
         self.now = now
+        self.makeEntryID = makeEntryID
     }
 
     /// Records that the user undid a specific correction, so future identical
@@ -90,6 +104,7 @@ final class LearningCache {
     /// Returns all learned entries ordered by most recent first.
     func allEntries() -> [LearnedEntry] {
         entries.map { LearnedEntry(
+            id: makeEntryID(),
             original: $0.original,
             corrected: $0.corrected,
             sourceLanguage: $0.sourceLanguage,

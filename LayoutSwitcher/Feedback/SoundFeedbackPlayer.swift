@@ -1,28 +1,26 @@
 import AppKit
 
-/// Plays system sounds for automatic-switch feedback.
+/// Plays system sounds for automatic correction feedback.
 @MainActor
 struct SoundFeedbackPlayer {
-    private let playClosure: (SoundFeedbackKind) -> Void
+    typealias PlaySound = @MainActor (CorrectionFeedbackKind) -> Void
 
-    init(_ closure: @escaping (SoundFeedbackKind) -> Void) {
+    private let playClosure: PlaySound
+
+    init(_ closure: @escaping PlaySound) {
         self.playClosure = closure
     }
 
     /// Plays the chosen system sound if feedback is enabled.
-    func play(kind: SoundFeedbackKind, isEnabled: Bool) {
+    func play(kind: CorrectionFeedbackKind, isEnabled: Bool) {
         guard isEnabled else { return }
         playClosure(kind)
     }
 
-    /// Production player that resolves sounds via `NSSound`.
-    static let live = SoundFeedbackPlayer { kind in
-        let name: String = {
-            switch kind {
-            case .tink:  return "Tink"
-            case .glass: return "Glass"
-            }
-        }()
-        NSSound(named: name)?.play()
+    /// Creates a production player that resolves sounds via `NSSound`.
+    static func live() -> SoundFeedbackPlayer {
+        SoundFeedbackPlayer { kind in
+            NSSound(named: kind.systemSoundName)?.play()
+        }
     }
 }

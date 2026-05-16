@@ -1,20 +1,24 @@
 import Foundation
 
-/// Triggers visual feedback (menu-bar flash) after successful automatic switches.
+/// Triggers visual feedback after successful automatic corrections.
 @MainActor
 struct VisualFeedbackPlayer {
-    private let flashClosure: () -> Void
+    typealias Flash = @MainActor (CorrectionFeedbackKind) -> Void
 
-    init(_ closure: @escaping () -> Void) {
+    private let flashClosure: Flash
+
+    init(_ closure: @escaping Flash) {
         self.flashClosure = closure
     }
 
     /// Triggers the flash if visual feedback is enabled.
-    func flash(isEnabled: Bool) {
+    func flash(kind: CorrectionFeedbackKind, isEnabled: Bool) {
         guard isEnabled else { return }
-        flashClosure()
+        flashClosure(kind)
     }
 
-    /// No-op placeholder for contexts that do not wire visual feedback.
-    static let live = VisualFeedbackPlayer {}
+    /// Creates a no-op placeholder for contexts that do not wire visual feedback.
+    static func live() -> VisualFeedbackPlayer {
+        VisualFeedbackPlayer { _ in }
+    }
 }

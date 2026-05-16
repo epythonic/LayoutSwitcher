@@ -2,7 +2,7 @@
 ///
 /// The first successful lookup wins semantically, but all parts are queried via `contains`
 /// short-circuiting, so ordering is relevant for performance only.
-final class CompositeDictionary: WordDictionary {
+struct CompositeDictionary: WordDictionary {
     let language: LanguageID
     private let parts: [any WordDictionary]
 

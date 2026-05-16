@@ -22,19 +22,43 @@ struct LayoutDetectorTests {
             .uk: NGramModels.ukrainian(),
             .ro: NGramModels.romanian()
         ],
-        romanianDiacriticResolver: RomanianDiacriticResolver(words: EmbeddedDictionaries.romanian().allWords)
+        romanianDiacriticResolver: RomanianDiacriticResolver(words: EmbeddedDictionaries.romanian().allWords),
+        russianYoResolver: RussianYoResolver(words: ["ёжик", "все", "всё"]),
+        thresholds: .default
     )
 
     private func chars(_ keyCodes: [CGKeyCode]) -> [WordChar] {
         keyCodes.map { WordChar(keyCode: $0, unicode: "", flags: [], timestamp: 0) }
     }
 
-    private func userDictionary(_ language: LanguageID, name: String = UUID().uuidString) -> UserDictionary {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LayoutSwitcherTests", isDirectory: true)
-            .appendingPathComponent("\(name)-\(language.rawValue).json")
-        try? FileManager.default.removeItem(at: url)
-        return UserDictionary(language: language, storageURL: url)
+    private func chars(_ text: String, language: LanguageID) -> [WordChar] {
+        let mapping = RuEnQwertyMapping()
+        var result: [WordChar] = []
+        result.reserveCapacity(text.count)
+        for character in text {
+            guard let encoded = mapping.keyCode(for: character, language: language) else {
+                Issue.record("missing keyCode for \(character) in \(language.rawValue)")
+                continue
+            }
+            var flags: CGEventFlags = []
+            if encoded.shift {
+                flags.insert(.maskShift)
+            }
+            result.append(WordChar(keyCode: encoded.keyCode, unicode: "", flags: flags, timestamp: 0))
+        }
+        return result
+    }
+
+    private func userDictionary(_ language: LanguageID, name: String = #function) -> UserDictionary {
+        let url = URL(fileURLWithPath: "/tmp/LayoutSwitcherTests-\(name)-\(language.rawValue).json")
+        return UserDictionary(
+            language: language,
+            storageURL: url,
+            createDirectory: { _ in },
+            fileExists: { _ in false },
+            readData: { _ in Data() },
+            writeData: { _, _ in }
+        )
     }
 
     // MARK: - Should switch
@@ -82,6 +106,144 @@ struct LayoutDetectorTests {
         #expect(decision == .switchAndRetype(corrected: "Bună", target: .ro))
     }
 
+    @Test func hellooOnEnDropsAccidentalDuplicateLetterWhenEnabled() {
+        let buffer = chars("helloo", language: .en)
+        let decision = detector.decide(
+            buffer: buffer,
+            activeLanguage: .en,
+            correctDuplicateLetters: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "hello", target: .en))
+    }
+
+    @Test func mixedDoubleCapitalAndDuplicateLetterComposeWhenEnabled() {
+        let buffer = chars("HElloo", language: .en)
+        let decision = detector.decide(
+            buffer: buffer,
+            activeLanguage: .en,
+            correctDoubleCapitals: true,
+            correctDuplicateLetters: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "Hello", target: .en))
+    }
+
+    @Test func пприветOnRuDropsAccidentalLeadingDuplicateLetterWhenEnabled() {
+        let buffer = chars("ппривет", language: .ru)
+        let decision = detector.decide(
+            buffer: buffer,
+            activeLanguage: .ru,
+            correctDuplicateLetters: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "привет", target: .ru))
+    }
+
+    @Test func привветOnRuDropsAccidentalInternalDuplicateLetterWhenEnabled() {
+        let buffer = chars("приввет", language: .ru)
+        let decision = detector.decide(
+            buffer: buffer,
+            activeLanguage: .ru,
+            correctDuplicateLetters: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "привет", target: .ru))
+    }
+
+    @Test func cupertinoCorrectsCommonEnglishTypoWhenEnabled() {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: InMemoryDictionary(language: .en, words: ["book"])
+            ],
+            ngrams: [
+                .en: NGramModels.english()
+            ],
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["bokk": ["book"]]),
+            thresholds: .default
+        )
+        let decision = detector.decide(
+            buffer: chars("bokk", language: .en),
+            activeLanguage: .en,
+            correctCommonTypos: true
+        )
+
+        #expect(decision == .switchAndRetype(corrected: "book", target: .en))
+        #expect(decision.retypePayload?.kind == .cupertino)
+    }
+
+    @Test func cupertinoKeepsCommonTypoWhenDisabled() {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: InMemoryDictionary(language: .en, words: ["book"])
+            ],
+            ngrams: [
+                .en: NGramModels.english()
+            ],
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["bokk": ["book"]]),
+            thresholds: .default
+        )
+        let decision = detector.decide(
+            buffer: chars("bokk", language: .en),
+            activeLanguage: .en,
+            correctCommonTypos: false
+        )
+
+        #expect(decision == .keep)
+    }
+
+    @Test func cupertinoDoesNotOverrideWrongLayoutSwitch() {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: InMemoryDictionary(language: .en, words: ["garden"]),
+                .ru: InMemoryDictionary(language: .ru, words: ["привет"])
+            ],
+            ngrams: [
+                .en: NGramModels.english(),
+                .ru: NGramModels.russian()
+            ],
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["ghbdtn": ["garden"]]),
+            thresholds: .default
+        )
+        let decision = detector.decide(
+            buffer: chars([5, 4, 11, 2, 17, 45]),
+            activeLanguage: .en,
+            correctCommonTypos: true
+        )
+
+        #expect(decision == .switchAndRetype(corrected: "привет", target: .ru))
+        #expect(decision.retypePayload?.kind == .layoutSwitch)
+    }
+
+    @Test func doubleLeadingCapitalsAreCorrectedWhenEnabled() {
+        let buffer = chars("ПРивет", language: .ru)
+        let decision = detector.decide(
+            buffer: buffer,
+            activeLanguage: .ru,
+            correctDoubleCapitals: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "Привет", target: .ru))
+    }
+
+    @Test func russianYoIsAddedWhenUnambiguous() {
+        let buffer = chars("ежик", language: .ru)
+        let decision = detector.decide(
+            buffer: buffer,
+            activeLanguage: .ru,
+            autoAddRussianYo: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "ёжик", target: .ru))
+    }
+
+    @Test func russianYoPreservesCapitalizedCasing() {
+        let buffer = chars("Ежик", language: .ru)
+        let decision = detector.decide(
+            buffer: buffer,
+            activeLanguage: .ru,
+            autoAddRussianYo: true
+        )
+        #expect(decision == .switchAndRetype(corrected: "Ёжик", target: .ru))
+    }
+
     @Test func romanianUserDictionaryFeedsDiacriticResolver() {
         let userEnglish = userDictionary(.en)
         let userRussian = userDictionary(.ru)
@@ -92,7 +254,9 @@ struct LayoutDetectorTests {
             userEnglish: userEnglish,
             userRussian: userRussian,
             userUkrainian: userUkrainian,
-            userRomanian: userRomanian
+            userRomanian: userRomanian,
+            systemSpellChecker: DeterministicSpellChecker(),
+            thresholds: .default
         )
 
         let buffer = chars([1, 8, 31, 0, 37, 0])
@@ -110,7 +274,9 @@ struct LayoutDetectorTests {
             userEnglish: userEnglish,
             userRussian: userRussian,
             userUkrainian: userUkrainian,
-            userRomanian: userRomanian
+            userRomanian: userRomanian,
+            systemSpellChecker: DeterministicSpellChecker(),
+            thresholds: .default
         )
         userRomanian.add("școală")
 
@@ -118,6 +284,31 @@ struct LayoutDetectorTests {
         let decision = detector.decide(buffer: buffer, activeLanguage: .ro, autoAddRomanianDiacritics: true)
 
         #expect(decision == .switchAndRetype(corrected: "școală", target: .ro))
+    }
+
+    @Test func romanianDiacriticResolverCacheRebuildsOnlyAfterUserWordsChange() {
+        var buildCount = 0
+        let cache = RomanianDiacriticResolverCache(
+            embeddedWords: ["bună"],
+            buildResolver: { words in
+                buildCount += 1
+                return RomanianDiacriticResolver(words: words)
+            }
+        )
+
+        #expect(buildCount == 1)
+        #expect(cache.resolver(userWords: []).variants(for: "buna") == ["bună"])
+        #expect(cache.plainOverrides(userWords: []) == [])
+        #expect(cache.resolver(userWords: []).variants(for: "buna") == ["bună"])
+        #expect(buildCount == 1)
+
+        #expect(cache.resolver(userWords: ["școală"]).variants(for: "scoala") == ["școală"])
+        #expect(cache.plainOverrides(userWords: ["școală"]) == [])
+        #expect(cache.resolver(userWords: ["școală"]).variants(for: "scoala") == ["școală"])
+        #expect(buildCount == 2)
+
+        #expect(cache.plainOverrides(userWords: ["buna", "școală"]) == ["buna"])
+        #expect(buildCount == 3)
     }
 
     @Test func romanianPlainUserDictionaryWordSuppressesDiacriticCorrection() {
@@ -130,7 +321,9 @@ struct LayoutDetectorTests {
             userEnglish: userEnglish,
             userRussian: userRussian,
             userUkrainian: userUkrainian,
-            userRomanian: userRomanian
+            userRomanian: userRomanian,
+            systemSpellChecker: DeterministicSpellChecker(),
+            thresholds: .default
         )
 
         let buffer = chars([11, 32, 45, 0])
@@ -149,7 +342,9 @@ struct LayoutDetectorTests {
             userEnglish: userEnglish,
             userRussian: userRussian,
             userUkrainian: userUkrainian,
-            userRomanian: userRomanian
+            userRomanian: userRomanian,
+            systemSpellChecker: DeterministicSpellChecker(),
+            thresholds: .default
         )
 
         let buffer = chars([17, 0, 15, 0])
@@ -232,7 +427,8 @@ struct LayoutDetectorTests {
                 .ru: NGramModels.russian(),
                 .uk: NGramModels.ukrainian(),
                 .ro: NGramModels.romanian()
-            ]
+            ],
+            thresholds: .default
         )
         let decision = permissiveDetector.decide(
             buffer: chars([6]),
@@ -271,6 +467,49 @@ struct LayoutDetectorTests {
         #expect(decision == .keep)
     }
 
+    @Test func legitimateRussianDuplicateLettersAreKeptWhenDuplicateCorrectionEnabled() {
+        let ванна = detector.decide(
+            buffer: chars("ванна", language: .ru),
+            activeLanguage: .ru,
+            correctDuplicateLetters: true
+        )
+        let аккаунт = detector.decide(
+            buffer: chars("аккаунт", language: .ru),
+            activeLanguage: .ru,
+            correctDuplicateLetters: true
+        )
+
+        #expect(ванна == .keep)
+        #expect(аккаунт == .keep)
+    }
+
+    @Test func doubleLeadingCapitalsAreKeptWhenFeatureDisabled() {
+        let decision = detector.decide(
+            buffer: chars("ПРивет", language: .ru),
+            activeLanguage: .ru
+        )
+        #expect(decision == .keep)
+    }
+
+    @Test func allCapsWordIsNotChangedByDoubleCapitalCorrector() {
+        let corrector = DoubleCapitalCorrector()
+        let correction = corrector.correction(
+            for: "USA",
+            dictionary: InMemoryDictionary(language: .en, words: ["usa"]),
+            thresholds: .default
+        )
+        #expect(correction == nil)
+    }
+
+    @Test func russianYoLeavesAmbiguousPlainWord() {
+        let decision = detector.decide(
+            buffer: chars("все", language: .ru),
+            activeLanguage: .ru,
+            autoAddRussianYo: true
+        )
+        #expect(decision == .keep)
+    }
+
     @Test func activeDictionaryHitCanBeOverriddenByStrongWrongLayoutCandidate() {
         let detector = LayoutDetector(
             mapping: RuEnQwertyMapping(),
@@ -285,7 +524,8 @@ struct LayoutDetectorTests {
                 .ru: NGramModels.russian(),
                 .uk: NGramModels.ukrainian(),
                 .ro: NGramModels.romanian()
-            ]
+            ],
+            thresholds: .default
         )
         let buffer = chars([5, 4, 11, 2, 17, 45])
         let decision = detector.decide(buffer: buffer, activeLanguage: .en)
@@ -306,11 +546,43 @@ struct LayoutDetectorTests {
                 .ru: NGramModels.russian(),
                 .uk: NGramModels.ukrainian(),
                 .ro: NGramModels.romanian()
-            ]
+            ],
+            thresholds: .default
         )
         let buffer = chars([4, 14, 37, 37, 31])
         let decision = detector.decide(buffer: buffer, activeLanguage: .en)
         #expect(decision == .keep)
+    }
+
+    @Test func thresholdsOverrideChangesNGramFallbackDecision() {
+        let detector = LayoutDetector(
+            mapping: FixedRenderMapping(renders: [.en: "abcd", .ru: "абвг"]),
+            dictionaries: [
+                .en: InMemoryDictionary(language: .en, words: []),
+                .ru: InMemoryDictionary(language: .ru, words: []),
+                .uk: InMemoryDictionary(language: .uk, words: []),
+                .ro: InMemoryDictionary(language: .ro, words: [])
+            ],
+            ngrams: [
+                .en: NGramModel(language: .en, corpus: []),
+                .ru: NGramModel(language: .ru, corpus: []),
+                .uk: NGramModel(language: .uk, corpus: []),
+                .ro: NGramModel(language: .ro, corpus: [])
+            ],
+            languageScorer: FixedScoreScorer(scores: [
+                .en: LanguageScore(naturalLanguageProbability: nil, nGramScore: 0.0),
+                .ru: LanguageScore(naturalLanguageProbability: nil, nGramScore: 0.3)
+            ]),
+            thresholds: .default
+        )
+        let buffer = chars([0, 1, 2, 3])
+
+        #expect(detector.decide(buffer: buffer, activeLanguage: .en) == .keep)
+        #expect(detector.decide(
+            buffer: buffer,
+            activeLanguage: .en,
+            thresholds: DetectionSensitivity.aggressive.thresholds
+        ) == .switchAndRetype(corrected: "абвг", target: .ru))
     }
 
     // MARK: - Ambiguous
@@ -332,4 +604,73 @@ private struct AlwaysTrueDictionary: WordDictionary {
     let language: LanguageID = .en
     func contains(_ word: String) -> Bool { true }
     var size: Int { Int.max }
+}
+
+private final class DeterministicSpellChecker: SpellChecking {
+    private let knownWordsByLanguage: [String: Set<String>] = [
+        "ro": ["tara"]
+    ]
+
+    var availableLanguages: [String] { ["en", "ru", "uk", "ro"] }
+
+    func checkSpelling(
+        of stringToCheck: String,
+        startingAt startingOffset: Int,
+        language: String?,
+        wrap wrapFlag: Bool,
+        inSpellDocumentWithTag tag: Int,
+        wordCount: UnsafeMutablePointer<Int>?
+    ) -> NSRange {
+        let word = stringToCheck.lowercased()
+        if let language, knownWordsByLanguage[language]?.contains(word) == true {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+        return NSRange(location: 0, length: stringToCheck.utf16.count)
+    }
+
+    func guesses(
+        forWordRange range: NSRange,
+        in string: String,
+        language: String?,
+        inSpellDocumentWithTag tag: Int
+    ) -> [String]? {
+        []
+    }
+}
+
+private struct FixedSuggestionProvider: SpellingSuggestionProviding {
+    let suggestionsByWord: [String: [String]]
+
+    func suggestions(for word: String, language: LanguageID) -> [String] {
+        suggestionsByWord[word] ?? []
+    }
+}
+
+private struct FixedRenderMapping: KeyboardMapping {
+    let languagePair: LanguagePair = .ruEn
+    let renders: [LanguageID: String]
+
+    func transliterate(_ chars: [WordChar], to language: LanguageID) -> String {
+        render(chars, in: language)
+    }
+
+    func render(_ chars: [WordChar], in language: LanguageID) -> String {
+        renders[language] ?? ""
+    }
+
+    func keyCode(for character: Character, language: LanguageID) -> (keyCode: CGKeyCode, shift: Bool)? {
+        nil
+    }
+
+    func convert(_ text: String, from sourceLanguage: LanguageID, to targetLanguage: LanguageID) -> String {
+        text
+    }
+}
+
+private struct FixedScoreScorer: LanguageScoring {
+    let scores: [LanguageID: LanguageScore]
+
+    func score(_ text: String, language: LanguageID) -> LanguageScore {
+        scores[language] ?? LanguageScore(naturalLanguageProbability: nil, nGramScore: -.infinity)
+    }
 }

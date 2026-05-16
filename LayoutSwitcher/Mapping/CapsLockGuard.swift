@@ -10,12 +10,34 @@ import os
 final class CapsLockGuard {
     private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "CapsLock")
 
+    typealias ReadCapsLockState = @MainActor () -> Bool
+    typealias SetCapsLockState = @MainActor (Bool) -> Bool
+
     private var capturedState: Bool?
+    private let readCapsLockState: ReadCapsLockState
+    private let setCapsLockState: SetCapsLockState
+
+    /// Creates a guard with explicit Caps Lock side effects.
+    init(
+        readCapsLockState: @escaping ReadCapsLockState,
+        setCapsLockState: @escaping SetCapsLockState
+    ) {
+        self.readCapsLockState = readCapsLockState
+        self.setCapsLockState = setCapsLockState
+    }
+
+    /// Creates the production guard backed by the current session Caps Lock state.
+    static func live() -> CapsLockGuard {
+        CapsLockGuard(
+            readCapsLockState: Self.liveReadCapsLockState,
+            setCapsLockState: Self.liveSetCapsLockState
+        )
+    }
 
     /// If Caps Lock is currently on, remember it and turn it off.
     /// No-op when already off.
     func captureAndDisable() {
-        guard isCapsLockOn() else { return }
+        guard readCapsLockState() else { return }
         capturedState = true
         if !setCapsLockState(false) {
             capturedState = nil
@@ -29,12 +51,12 @@ final class CapsLockGuard {
         _ = setCapsLockState(state)
     }
 
-    private func isCapsLockOn() -> Bool {
+    private static func liveReadCapsLockState() -> Bool {
         return CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
     }
 
     @discardableResult
-    private func setCapsLockState(_ enabled: Bool) -> Bool {
+    private static func liveSetCapsLockState(_ enabled: Bool) -> Bool {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(kIOHIDSystemClass))
         guard service != 0 else {
             Self.logger.error("IOServiceGetMatchingService(kIOHIDSystemClass) returned 0")

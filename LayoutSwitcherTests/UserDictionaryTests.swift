@@ -12,6 +12,7 @@ struct UserDictionaryTests {
         let dictionary = UserDictionary(
             language: .ro,
             storageURL: url,
+            createDirectory: { _ in },
             fileExists: { path in path == url.path },
             readData: { requestedURL in
                 #expect(requestedURL == url)

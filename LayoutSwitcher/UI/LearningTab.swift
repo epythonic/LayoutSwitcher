@@ -51,14 +51,14 @@ struct LearningTab: View {
             List {
                 ForEach(entries) { entry in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(entry.original) → \(entry.corrected)")
+                        Text(Self.localizedArrowPair(entry.original, entry.corrected))
                             .font(.body)
                         HStack(spacing: 4) {
-                            Text("\(entry.sourceLanguage) → \(entry.targetLanguage)")
+                            Text(Self.localizedArrowPair(entry.sourceLanguage, entry.targetLanguage))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             if let bundleID = entry.bundleID {
-                                Text("•")
+                                Text(verbatim: "•")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 Text(bundleID)
@@ -78,6 +78,10 @@ struct LearningTab: View {
             }
             .listStyle(.plain)
         }
+    }
+
+    private static func localizedArrowPair(_ leading: String, _ trailing: String) -> String {
+        String(format: NSLocalizedString("%@ → %@", comment: "Two values separated by an arrow."), leading, trailing)
     }
 
     private func refresh() {

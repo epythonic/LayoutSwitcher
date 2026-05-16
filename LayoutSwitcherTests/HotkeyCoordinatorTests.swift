@@ -47,20 +47,22 @@ struct HotkeyCoordinatorTests {
         currentBundleID: String = "com.test.app",
         retypeSucceeds: Bool = true,
         activeLanguage: LanguageID = .en,
-        currentDate: Date = Date(timeIntervalSinceReferenceDate: 1_000)
-    ) -> Fixture {
+        currentDate: Date = Date(timeIntervalSinceReferenceDate: 1_000),
+        testName: String = #function
+    ) throws -> Fixture {
         let buffer = WordBuffer(now: { currentDate })
-        let isolatedDefaults = UserDefaults(suiteName: "HotkeyCoordinatorTests-\(UUID().uuidString)") ?? .standard
-        let stats = UsageStats(defaults: isolatedDefaults)
-        let recents = RecentSwitches(defaults: isolatedDefaults)
-        let appState = AppState(defaults: isolatedDefaults)
+        let suiteName = "HotkeyCoordinatorTests.\(testName)"
+        let isolatedDefaults = try #require(UserDefaults(suiteName: suiteName))
+        isolatedDefaults.removePersistentDomain(forName: suiteName)
+        let stats = UsageStats(defaults: isolatedDefaults, now: { Date(timeIntervalSince1970: 0) })
+        let recents = RecentSwitches(defaults: isolatedDefaults, makeEntryID: { Self.fixedID() })
+        let appState = AppState(defaults: isolatedDefaults, now: { Date(timeIntervalSince1970: 0) })
         let layoutState = LayoutState(currentLayoutID: currentLayoutID)
         let output = Fixture(coordinator: HotkeyCoordinator(
             buffer: buffer,
             mapping: StubMapping(),
             retyper: Retyper(
                 mapping: StubMapping(),
-                inputSources: FakeInputSources.defaultRuEn(),
                 enabledLayoutsProvider: {
                     [
                         RetypeInputSource(id: "com.apple.keylayout.ABC", primaryLanguage: "en"),
@@ -75,7 +77,8 @@ struct HotkeyCoordinatorTests {
                 },
                 sleep: { _ in },
                 postKeyEvent: { _, _ in },
-                postUnicodeEvent: { _ in }
+                postUnicodeEvent: { _ in },
+                capsLockGuard: Self.inertCapsLockGuard()
             ),
             inputSources: FakeInputSources.defaultRuEn(),
             stats: stats,
@@ -86,6 +89,10 @@ struct HotkeyCoordinatorTests {
             now: { currentDate }
         ), buffer: buffer, stats: stats, recents: recents, appState: appState, layoutState: layoutState)
         return output
+    }
+
+    private static func fixedID(_ byte: UInt8 = 1) -> UUID {
+        UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, byte))
     }
 
     private static func wordChars(_ unicode: String) -> [WordChar] {
@@ -111,8 +118,8 @@ struct HotkeyCoordinatorTests {
         await Task.yield()
     }
 
-    @Test func manualToggleRetypesLastCommittedWord() async {
-        let fixture = Self.makeFixture()
+    @Test func manualToggleRetypesLastCommittedWord() async throws {
+        let fixture = try Self.makeFixture()
         let buffer = fixture.buffer
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.append(KeyEvent(keyCode: 4, flags: [], unicode: "h", timestamp: 2))
@@ -123,8 +130,8 @@ struct HotkeyCoordinatorTests {
         #expect(fixture.stats.manualSwitchesTotal == initialManual + 1)
     }
 
-    @Test func manualToggleExpiredDoesNothing() async {
-        let fixture = Self.makeFixture()
+    @Test func manualToggleExpiredDoesNothing() async throws {
+        let fixture = try Self.makeFixture()
         let buffer = fixture.buffer
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.commit(separator: .space, separatorKeyCode: 49)
@@ -136,8 +143,8 @@ struct HotkeyCoordinatorTests {
         #expect(fixture.stats.manualSwitchesTotal == initialManual + 1)
     }
 
-    @Test func manualToggleFromUkrainianTargetsEnglish() async {
-        let fixture = Self.makeFixture(currentLayoutID: "com.apple.keylayout.RussianWin", activeLanguage: .uk)
+    @Test func manualToggleFromUkrainianTargetsEnglish() async throws {
+        let fixture = try Self.makeFixture(currentLayoutID: "com.apple.keylayout.RussianWin", activeLanguage: .uk)
         let buffer = fixture.buffer
         buffer.append(KeyEvent(keyCode: 5, flags: [], unicode: "g", timestamp: 1))
         buffer.commit(separator: .space, separatorKeyCode: 49)
@@ -148,8 +155,8 @@ struct HotkeyCoordinatorTests {
         #expect(fixture.layoutState.currentLayoutID == "com.apple.keylayout.ABC")
     }
 
-    @Test func undoLastAutoSwitchRevertsCorrection() async {
-        let fixture = Self.makeFixture()
+    @Test func undoLastAutoSwitchRevertsCorrection() async throws {
+        let fixture = try Self.makeFixture()
         let record = AutoSwitchRecord(
             original: Self.wordChars("ghbdtn"),
             corrected: "привет",
@@ -157,7 +164,7 @@ struct HotkeyCoordinatorTests {
             sourceLanguage: .en,
             separator: .space,
             bundleID: "com.test.app",
-            timestamp: Date(),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
             originalText: "ghbdtn"
         )
         fixture.coordinator.lastAutoSwitch = record
@@ -166,8 +173,8 @@ struct HotkeyCoordinatorTests {
         #expect(fixture.coordinator.lastAutoSwitch == nil)
     }
 
-    @Test func undoWithMismatchedBundleDoesNothing() async {
-        let fixture = Self.makeFixture(currentBundleID: "com.test.other")
+    @Test func undoWithMismatchedBundleDoesNothing() async throws {
+        let fixture = try Self.makeFixture(currentBundleID: "com.test.other")
         let record = AutoSwitchRecord(
             original: Self.wordChars("ghbdtn"),
             corrected: "привет",
@@ -175,7 +182,7 @@ struct HotkeyCoordinatorTests {
             sourceLanguage: .en,
             separator: .space,
             bundleID: "com.test.app",
-            timestamp: Date(),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
             originalText: "ghbdtn"
         )
         fixture.coordinator.lastAutoSwitch = record
@@ -184,8 +191,8 @@ struct HotkeyCoordinatorTests {
         #expect(fixture.coordinator.lastAutoSwitch == nil)
     }
 
-    @Test func snoozeHotkeyStartsConfiguredPause() {
-        let fixture = Self.makeFixture()
+    @Test func snoozeHotkeyStartsConfiguredPause() throws {
+        let fixture = try Self.makeFixture()
         fixture.appState.snoozeDuration = .fifteenMinutes
 
         fixture.coordinator.handle(.snooze)
@@ -194,8 +201,8 @@ struct HotkeyCoordinatorTests {
         #expect(fixture.appState.activeSnoozeRemaining ?? 0 > 14 * 60)
     }
 
-    @Test func snoozeHotkeyClearsActivePause() {
-        let fixture = Self.makeFixture()
+    @Test func snoozeHotkeyClearsActivePause() throws {
+        let fixture = try Self.makeFixture()
         fixture.appState.startSnooze()
 
         fixture.coordinator.handle(.snooze)
@@ -204,9 +211,9 @@ struct HotkeyCoordinatorTests {
         #expect(fixture.appState.snoozedUntil == nil)
     }
 
-    @Test func forceRetypeLastWordCallsHandler() {
+    @Test func forceRetypeLastWordCallsHandler() throws {
         var called = false
-        let fixture = Self.makeFixture()
+        let fixture = try Self.makeFixture()
         fixture.coordinator.forceRetypeHandler = { called = true }
 
         fixture.coordinator.handle(.forceRetypeLastWord)
@@ -214,11 +221,18 @@ struct HotkeyCoordinatorTests {
         #expect(called)
     }
 
-    @Test func forceRetypeLastWordFallsBackToTypingPipeline() {
-        let fixture = Self.makeFixture()
+    @Test func forceRetypeLastWordFallsBackToTypingPipeline() throws {
+        let fixture = try Self.makeFixture()
         fixture.coordinator.handle(.forceRetypeLastWord)
 
         // No crash and no-op when typingPipeline is nil is sufficient.
+    }
+
+    private static func inertCapsLockGuard() -> CapsLockGuard {
+        CapsLockGuard(
+            readCapsLockState: { false },
+            setCapsLockState: { _ in true }
+        )
     }
 }
 

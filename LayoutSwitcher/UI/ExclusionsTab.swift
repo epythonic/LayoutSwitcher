@@ -4,7 +4,9 @@ import UniformTypeIdentifiers
 
 /// Settings tab for managing app exclusions from automatic switching.
 struct ExclusionsTab: View {
+    /// Exclusion list model persisted through `UserDefaults`.
     @Bindable var exclusions: ExclusionList
+    /// Currently selected bundle identifier in the exclusions list.
     @State private var selection: String?
 
     /// Renders exclusion list and add/remove/reset controls.

@@ -1,21 +1,39 @@
 import AppKit
 import os
 
+/// Owns the menu bar item, its dynamic badge state, and the status menu actions.
 @MainActor
 final class StatusItemController: NSObject {
+    /// System status item displayed in the macOS menu bar.
     private let statusItem: NSStatusItem
+    /// Shared application state used for enabled/snooze indicators.
     private let appState: AppState
+    /// Accessibility permission monitor used to refresh menu state.
     private let permission: AccessibilityPermission
+    /// Recent automatic corrections shown in the status menu.
     private let recents: RecentSwitches
+    /// Per-application exclusion list mutated from recent-entry submenu actions.
     private let exclusions: ExclusionList
+    /// Optional presentation detector that suppresses auto-switching badge state.
     private let presentationDetector: PresentationModeDetector?
+    /// Opens the preferences window.
     private let openSettings: () -> Void
+    /// Opens the onboarding/setup window.
     private let openOnboarding: () -> Void
+    /// Opens the help window.
     private let openHelp: () -> Void
+    /// Whether the focused UI element is a secure text field.
     private var isSecureTextField = false
+    /// Whether global secure event input is currently enabled.
     private var isSecureInputGlobal = false
+    /// Last language code used to redraw the status icon after badge-only changes.
     private var lastLanguageCode: String?
+    /// Temporary correction-type badge shown after successful automatic corrections.
+    private var feedbackBadge: String?
+    /// Cancels/replaces an in-flight visual feedback badge reset.
+    private var feedbackBadgeTask: Task<Void, Never>?
 
+    /// Creates a status item controller with injected navigation callbacks.
     init(
         appState: AppState,
         permission: AccessibilityPermission,
@@ -41,6 +59,7 @@ final class StatusItemController: NSObject {
         statusItem.menu = buildMenu()
     }
 
+    /// Configures the status item button image, title, and tooltip.
     private func configureButton() {
         guard let button = statusItem.button else {
             AppDelegate.logger.error("StatusItem button is nil — menu bar item not created")
@@ -52,18 +71,21 @@ final class StatusItemController: NSObject {
         button.toolTip = String(localized: "settings.about.title")
     }
 
+    /// Updates secure text-field state and redraws the status icon when it changes.
     func updateSecureTextFieldState(_ isSecure: Bool) {
         guard isSecureTextField != isSecure else { return }
         isSecureTextField = isSecure
         updateLayoutBadge(lastLanguageCode)
     }
 
+    /// Updates global secure-input state and redraws the status icon when it changes.
     func updateGlobalSecureInputState(_ isSecure: Bool) {
         guard isSecureInputGlobal != isSecure else { return }
         isSecureInputGlobal = isSecure
         updateLayoutBadge(lastLanguageCode)
     }
 
+    /// Updates the language icon and pause/presentation badge in the menu bar.
     func updateLayoutBadge(_ languageCode: String?) {
         lastLanguageCode = languageCode
         guard let button = statusItem.button else { return }
@@ -72,6 +94,8 @@ final class StatusItemController: NSObject {
             badge = "P\(max(1, Int(ceil(remaining / 60))))"
         } else if presentationDetector?.isPresenting == true {
             badge = "PR"
+        } else if let feedbackBadge {
+            badge = feedbackBadge
         } else {
             badge = ""
         }
@@ -79,6 +103,20 @@ final class StatusItemController: NSObject {
         button.image = statusImage(for: languageCode)
     }
 
+    /// Shows a short correction-type badge in the menu bar.
+    func flashCorrection(_ kind: CorrectionFeedbackKind) {
+        feedbackBadgeTask?.cancel()
+        feedbackBadge = kind.visualBadge
+        updateLayoutBadge(lastLanguageCode)
+        feedbackBadgeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self, !Task.isCancelled else { return }
+            self.feedbackBadge = nil
+            self.updateLayoutBadge(self.lastLanguageCode)
+        }
+    }
+
+    /// Builds the correct status icon for secure, disabled, language, or fallback state.
     private func statusImage(for languageCode: String?) -> NSImage {
         let state: StatusBarIconState
         if isSecureTextField || isSecureInputGlobal {
@@ -93,11 +131,13 @@ final class StatusItemController: NSObject {
         return StatusBarIconRenderer.image(for: state)
     }
 
+    /// Converts a locale/layout code to a compact two-letter menu-bar badge.
     static func languageBadge(_ code: String) -> String {
         let prefix = code.prefix(2).lowercased()
         return prefix.uppercased()
     }
 
+    /// Builds the static menu skeleton; dynamic items are refreshed before display.
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
@@ -189,6 +229,7 @@ final class StatusItemController: NSObject {
         return menu
     }
 
+    /// Rebuilds the recent corrections submenu from the current history snapshot.
     private func rebuildRecents(_ submenu: NSMenu) {
         submenu.removeAllItems()
         if recents.entries.isEmpty {
@@ -198,7 +239,7 @@ final class StatusItemController: NSObject {
             return
         }
         for entry in recents.entries.prefix(10) {
-            let title = "\(entry.original) → \(entry.corrected)" + (entry.bundleName.map { "  ·  \($0)" } ?? "")
+            let title = Self.localizedArrowPair(entry.original, entry.corrected) + (entry.bundleName.map { "  ·  \($0)" } ?? "")
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             if let bundleID = entry.bundleID, !exclusions.contains(bundleID) {
                 let sub = NSMenu()
@@ -217,10 +258,16 @@ final class StatusItemController: NSObject {
         }
     }
 
+    private static func localizedArrowPair(_ leading: String, _ trailing: String) -> String {
+        String(format: NSLocalizedString("%@ → %@", comment: "Two values separated by an arrow."), leading, trailing)
+    }
+
+    /// Toggles global automatic switching.
     @objc private func toggleEnabled() {
         appState.isEnabled.toggle()
     }
 
+    /// Toggles the configured snooze interval and refreshes the badge.
     @objc private func toggleSnooze() {
         if appState.isSnoozed {
             appState.clearSnooze()
@@ -230,22 +277,27 @@ final class StatusItemController: NSObject {
         updateLayoutBadge(lastLanguageCode)
     }
 
+    /// Opens preferences from the status menu.
     @objc private func openPreferences() {
         openSettings()
     }
 
+    /// Opens onboarding/setup from the status menu.
     @objc private func openSetup() {
         openOnboarding()
     }
 
+    /// Opens help from the status menu.
     @objc private func openHelpWindow() {
         openHelp()
     }
 
+    /// Terminates the application from the status menu.
     @objc private func quit() {
         NSApp.terminate(nil)
     }
 
+    /// Adds a recent entry bundle ID to exclusions from the submenu action.
     @objc private func addBundleToExclusions(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         exclusions.add(id)
@@ -253,6 +305,7 @@ final class StatusItemController: NSObject {
 }
 
 extension StatusItemController: NSMenuDelegate {
+    /// Refreshes dynamic menu titles, permission state, snooze state, and recents before display.
     func menuNeedsUpdate(_ menu: NSMenu) {
         permission.refresh()
 
@@ -295,11 +348,18 @@ extension StatusItemController: NSMenuDelegate {
 }
 
 private extension NSUserInterfaceItemIdentifier {
+    /// Toggle enabled menu item identifier.
     static let toggleEnabled = NSUserInterfaceItemIdentifier("toggleEnabled")
+    /// Accessibility status menu item identifier.
     static let accessibilityStatus = NSUserInterfaceItemIdentifier("accessibilityStatus")
+    /// Last action menu item identifier.
     static let lastAction = NSUserInterfaceItemIdentifier("lastAction")
+    /// Snooze menu item identifier.
     static let snooze = NSUserInterfaceItemIdentifier("snooze")
+    /// Presentation status menu item identifier.
     static let presentation = NSUserInterfaceItemIdentifier("presentation")
+    /// Setup/onboarding menu item identifier.
     static let openSetup = NSUserInterfaceItemIdentifier("openSetup")
+    /// Recent corrections menu item identifier.
     static let recents = NSUserInterfaceItemIdentifier("recents")
 }

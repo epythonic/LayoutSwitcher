@@ -7,11 +7,8 @@ struct HelpContentTests {
         #expect(HelpContent.sections.contains { $0.id == "privacy" })
     }
 
-    @Test func privacySectionContainsKeyPhrases() {
-        guard let privacySection = HelpContent.sections.first(where: { $0.id == "privacy" }) else {
-            Issue.record("Privacy section not found")
-            return
-        }
+    @Test func privacySectionContainsKeyPhrases() throws {
+        let privacySection = try #require(HelpContent.sections.first { $0.id == "privacy" })
 
         #expect(privacySection.bodyEN.contains("Accessibility"))
         #expect(privacySection.bodyEN.contains("local"))

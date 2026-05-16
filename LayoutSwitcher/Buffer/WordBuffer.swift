@@ -36,8 +36,8 @@ final class WordBuffer {
     /// App bundle ID supplier attached by pipeline for context-aware commits.
     var bundleIDProvider: () -> String? = { nil }
 
-    /// Creates a buffer with an injectable clock for deterministic commit timestamps.
-    init(now: @escaping @MainActor () -> Date = Date.init) {
+    /// Creates a buffer with an explicit clock for deterministic commit timestamps.
+    init(now: @escaping @MainActor () -> Date) {
         self.now = now
     }
 

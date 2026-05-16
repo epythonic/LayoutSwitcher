@@ -2,6 +2,11 @@ import CoreGraphics
 import Foundation
 import os
 
+/// Coordinates key events, word buffering, layout detection, and retype dispatch.
+///
+/// The pipeline is the main runtime boundary between low-level keyboard input
+/// and high-level app services such as statistics, exclusions, learning cache,
+/// notifications, and feedback.
 @MainActor
 final class TypingPipeline {
     private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Pipeline")
@@ -36,6 +41,9 @@ final class TypingPipeline {
     private var suppressUntilSeparator = false
     private let sequenceDetector: SequenceDetector
     private(set) var committedHistory: [CommittedWord] = []
+    private var currentDetectionThresholds: DetectionThresholds {
+        appState?.detectionSensitivity.thresholds ?? detector.thresholds
+    }
 
     init(
         buffer: WordBuffer,
@@ -52,11 +60,10 @@ final class TypingPipeline {
         stats: UsageStats,
         recents: RecentSwitches,
         perAppLayouts: PerAppLayoutPreferences? = nil,
-        tunables: PipelineTunables = .default,
-        now: @escaping @MainActor () -> Date = Date.init,
-        sleepBeforeSequenceFlush: @escaping @MainActor @Sendable (Duration) async -> Void = { duration in
-            try? await Task.sleep(for: duration)
-        }
+        tunables: PipelineTunables,
+        bundleNameProvider: @escaping @MainActor (String) -> String? = { _ in nil },
+        sleepBeforeSequenceFlush: @escaping @MainActor @Sendable (Duration) async -> Void,
+        now: @escaping @MainActor () -> Date
     ) {
         self.buffer = buffer
         self.focused = focused
@@ -80,6 +87,7 @@ final class TypingPipeline {
             soundFeedback: soundFeedback,
             visualFeedback: visualFeedback,
             tunables: tunables,
+            bundleNameProvider: bundleNameProvider,
             now: now
         )
         self.retypeDispatcher = dispatcher
@@ -203,11 +211,51 @@ final class TypingPipeline {
             return
         }
 
+        if let visibleLanguage = visibleCorrectionLanguage(for: word.text, fallback: activeLanguage) {
+            if let layoutDecision = preferredCrossLayoutDecisionBeforeVisibleCorrection(
+                word: word,
+                activeLanguage: activeLanguage,
+                visibleLanguage: visibleLanguage
+            ) {
+                if layoutDecision == .keep {
+                    resetPendingSequence(clearCooldown: true)
+                } else {
+                    let sourceLanguage = preferredDecisionSourceLanguage(
+                        layoutDecision,
+                        visibleLanguage: visibleLanguage,
+                        fallback: activeLanguage
+                    )
+                    _ = applyRetypeDecision(layoutDecision, word: word, activeLanguage: sourceLanguage, originalText: word.text)
+                }
+                return
+            }
+            if applyVisibleTextCorrection(text: word.text, language: visibleLanguage, word: word) {
+                return
+            }
+        }
+        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) {
+            guard renderedLanguage == .ru else { continue }
+            let renderedText = detector.mapping.render(word.characters, in: renderedLanguage)
+            guard renderedText != word.text,
+                  visibleCorrectionLanguage(for: renderedText, fallback: renderedLanguage) == renderedLanguage else {
+                continue
+            }
+            if applyRenderedRussianYoCorrection(text: renderedText, word: word) {
+                return
+            }
+        }
+
         let decision = detector.decide(
             buffer: word.characters,
             activeLanguage: activeLanguage,
             autoAddRomanianDiacritics: appState?.autoAddRomanianDiacritics == true,
-            correctSingleCharacterWords: appState?.correctSingleCharacterWords == true
+            autoAddRussianYo: appState?.autoAddRussianYo == true,
+            correctDoubleCapitals: appState?.correctDoubleCapitals == true,
+            correctDuplicateLetters: appState?.correctDuplicateLetters == true,
+            correctCommonTypos: appState?.correctCommonTypos == true,
+            correctSingleCharacterWords: appState?.correctSingleCharacterWords == true,
+            allowedTargetLanguages: allowedCrossLayoutTargets(from: activeLanguage),
+            thresholds: currentDetectionThresholds
         )
         switch decision {
         case .keep:
@@ -216,59 +264,263 @@ final class TypingPipeline {
         case .ambiguous(let reason):
             resetPendingSequence(clearCooldown: true)
             Self.logger.debug("ambiguous: \(reason, privacy: .public)")
-        case .switchAndRetype(let corrected, let target):
-            if exclusions.contains(word.bundleID) {
-                resetPendingSequence(clearCooldown: true)
-                Self.logger.info("decision: switch suppressed (excluded app: \(word.bundleID ?? "?", privacy: .public))")
-                return
-            }
-            let originalText = detector.mapping.render(word.characters, in: activeLanguage)
-            // Allow keycodes that render as punctuation in the active layout but
-            // as letters in another (e.g. `;` → `ж`, `]` → `ъ`). decide() already
-            // accepted them; double-filtering here would drop legitimate
-            // wrong-layout words like `;le` (should retype to `жду`).
-            let ambiguousChars = detector.mapping.ambiguousWordInternalCharacters
-            guard originalText.allSatisfy({ $0.isLetter || ambiguousChars.contains($0) }) else {
-                resetPendingSequence(clearCooldown: true)
-                return
-            }
-            if learningCache?.shouldSuppress(
-                original: originalText,
-                corrected: corrected,
-                sourceLanguage: activeLanguage,
-                targetLanguage: target,
-                bundleID: word.bundleID
-            ) == true {
-                resetPendingSequence(clearCooldown: true)
-                Self.logger.info("decision: switch suppressed (learned exception)")
-                return
-            }
-            let candidate = PendingRetypeCandidate(
-                word: word,
-                activeLanguage: activeLanguage,
-                targetLanguage: target,
-                corrected: corrected,
-                originalText: originalText
-            )
-            guard !isRetyping else { return }
-
-            let extendEnabled = appState?.autoExtendRecentAmbiguous == true
-            Self.logger.info("trigger: \"\(originalText, privacy: .public)\" → \"\(corrected, privacy: .public)\" target=\(target.rawValue, privacy: .public) extend=\(extendEnabled, privacy: .public) history=\(self.committedHistory.count, privacy: .public)")
-            if extendEnabled {
-                let retroactive = collectRetroactiveCandidates(
-                    currentTarget: target,
-                    activeLanguage: activeLanguage
-                )
-                if !retroactive.isEmpty {
-                    Self.logger.info("auto-extend: \(retroactive.count, privacy: .public) retroactive word(s) target=\(target.rawValue, privacy: .public)")
-                    sequenceDetector.reset()
-                    retypeDispatcher.dispatch(retroactive + [candidate])
-                    return
-                }
-            }
-
-            sequenceDetector.ingest(candidate)
+        case .switchAndRetype(_, _), .switchAndRetypeWithFeedback(_, _, _):
+            _ = applyRetypeDecision(decision, word: word, activeLanguage: activeLanguage)
         }
+    }
+
+    private func sameLanguageCorrectionCandidates(activeLanguage: LanguageID) -> [LanguageID] {
+        [activeLanguage] + LanguageID.allCases.filter { $0 != activeLanguage }
+    }
+
+    private func allowedCrossLayoutTargets(from sourceLanguage: LanguageID) -> Set<LanguageID>? {
+        guard let configuredTargets = appState?.enabledCrossLayoutTargets(from: sourceLanguage) else {
+            return nil
+        }
+        return configuredTargets.intersection(inputSources.enabledLayoutLanguages())
+    }
+
+    private func visibleCorrectionLanguage(for text: String, fallback: LanguageID) -> LanguageID? {
+        guard !text.isEmpty, text.allSatisfy(\.isLetter) else { return nil }
+        if detector.wordMatchesAlphabet(text, of: fallback) {
+            return fallback
+        }
+        let matches = LanguageID.allCases.filter { detector.wordMatchesAlphabet(text, of: $0) }
+        if matches.contains(.ru) { return .ru }
+        if matches.contains(.ro),
+           let romanianPayload = visibleTextCorrectionDecision(text: text, language: .ro).retypePayload,
+           romanianPayload.target == .ro,
+           romanianPayload.kind != .layoutSwitch {
+            return .ro
+        }
+        if matches.contains(.ro),
+           detector.dictionaries[.ro]?.contains(text) == true,
+           detector.dictionaries[.en]?.contains(text) != true {
+            return .ro
+        }
+        if matches.contains(.en) { return .en }
+        if matches.contains(.ro) { return .ro }
+        if matches.contains(.uk) { return .uk }
+        return nil
+    }
+
+    private func preferredCrossLayoutDecisionBeforeVisibleCorrection(
+        word: CommittedWord,
+        activeLanguage: LanguageID,
+        visibleLanguage: LanguageID
+    ) -> LayoutDecision? {
+        let rawLayoutDecision = detector.decide(
+            buffer: word.characters,
+            activeLanguage: activeLanguage,
+            correctSingleCharacterWords: appState?.correctSingleCharacterWords == true,
+            allowedTargetLanguages: allowedCrossLayoutTargets(from: activeLanguage),
+            thresholds: currentDetectionThresholds
+        )
+        let layoutSwitchDecision: LayoutDecision?
+        if let payload = rawLayoutDecision.retypePayload,
+           payload.kind == .layoutSwitch,
+           payload.target != activeLanguage,
+           isRetypeTargetAllowed(payload.target, from: activeLanguage) {
+            layoutSwitchDecision = rawLayoutDecision
+        } else {
+            layoutSwitchDecision = nil
+        }
+        var activeRenderedDictionaryDecision: LayoutDecision?
+        let visibleDecision = visibleTextCorrectionDecision(text: word.text, language: visibleLanguage)
+        if shouldVisibleLatinOutrankRenderedCorrection(word.text, activeLanguage: activeLanguage, visibleLanguage: visibleLanguage) {
+            if let visiblePayload = visibleDecision.retypePayload,
+               visiblePayload.target == visibleLanguage,
+               visiblePayload.kind != .layoutSwitch {
+                return visibleDecision
+            }
+            if isKnownVisibleLatinWord(word.text, visibleLanguage: visibleLanguage) {
+                return .keep
+            }
+        }
+        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) where renderedLanguage != visibleLanguage {
+            guard isRetypeTargetAllowed(renderedLanguage, from: activeLanguage) else {
+                continue
+            }
+            let renderedText = detector.mapping.render(word.characters, in: renderedLanguage)
+            guard renderedText != word.text,
+                  visibleCorrectionLanguage(for: renderedText, fallback: renderedLanguage) == renderedLanguage else {
+                continue
+            }
+            let renderedDecision = visibleTextCorrectionDecision(text: renderedText, language: renderedLanguage)
+            guard let renderedPayload = renderedDecision.retypePayload,
+                  renderedPayload.target == renderedLanguage else {
+                continue
+            }
+            return renderedDecision
+        }
+        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) where renderedLanguage != visibleLanguage {
+            guard isRetypeTargetAllowed(renderedLanguage, from: activeLanguage) else {
+                continue
+            }
+            let renderedText = detector.mapping.render(word.characters, in: renderedLanguage)
+            guard renderedLanguage == activeLanguage,
+                  renderedText != word.text,
+                  detector.wordMatchesAlphabet(renderedText, of: renderedLanguage),
+                  detector.dictionaries[renderedLanguage]?.contains(renderedText) == true else {
+                continue
+            }
+            activeRenderedDictionaryDecision = .switchAndRetype(corrected: renderedText, target: renderedLanguage)
+            break
+        }
+        if visibleLanguage != activeLanguage {
+            return activeRenderedDictionaryDecision
+        }
+        return activeRenderedDictionaryDecision ?? layoutSwitchDecision
+    }
+
+    private func isRetypeTargetAllowed(_ target: LanguageID, from activeLanguage: LanguageID) -> Bool {
+        if target == activeLanguage { return true }
+        guard let allowedTargets = allowedCrossLayoutTargets(from: activeLanguage) else {
+            return true
+        }
+        return allowedTargets.contains(target)
+    }
+
+    private func preferredDecisionSourceLanguage(
+        _ decision: LayoutDecision,
+        visibleLanguage: LanguageID,
+        fallback: LanguageID
+    ) -> LanguageID {
+        guard let payload = decision.retypePayload,
+              payload.target == visibleLanguage,
+              payload.kind != .layoutSwitch else {
+            return fallback
+        }
+        return visibleLanguage
+    }
+
+    private func shouldVisibleLatinOutrankRenderedCorrection(
+        _ text: String,
+        activeLanguage: LanguageID,
+        visibleLanguage: LanguageID
+    ) -> Bool {
+        guard visibleLanguage == .en || visibleLanguage == .ro,
+              detector.wordMatchesAlphabet(text, of: visibleLanguage) else {
+            return false
+        }
+        return true
+    }
+
+    private func isKnownVisibleLatinWord(_ text: String, visibleLanguage: LanguageID) -> Bool {
+        guard visibleLanguage == .en || visibleLanguage == .ro else { return false }
+        return detector.dictionaries[visibleLanguage]?.contains(text) == true
+            || detector.dictionaries[.en]?.contains(text) == true
+            || detector.dictionaries[.ro]?.contains(text) == true
+    }
+
+    private func visibleTextCorrectionDecision(text: String, language: LanguageID) -> LayoutDecision {
+        detector.decideVisibleTextCorrection(
+            text: text,
+            language: language,
+            autoAddRomanianDiacritics: appState?.autoAddRomanianDiacritics == true,
+            autoAddRussianYo: appState?.autoAddRussianYo == true,
+            correctDoubleCapitals: appState?.correctDoubleCapitals == true,
+            correctDuplicateLetters: appState?.correctDuplicateLetters == true,
+            correctCommonTypos: appState?.correctCommonTypos == true,
+            thresholds: currentDetectionThresholds
+        )
+    }
+
+    private func applyVisibleTextCorrection(text: String, language: LanguageID, word: CommittedWord) -> Bool {
+        let visibleDecision = visibleTextCorrectionDecision(text: text, language: language)
+        return applyRetypeDecision(
+            visibleDecision,
+            word: word,
+            activeLanguage: language,
+            originalText: text
+        )
+    }
+
+    private func applyRenderedRussianYoCorrection(text: String, word: CommittedWord) -> Bool {
+        let decision = detector.decideVisibleTextCorrection(
+            text: text,
+            language: .ru,
+            autoAddRussianYo: appState?.autoAddRussianYo == true,
+            thresholds: currentDetectionThresholds
+        )
+        return applyRetypeDecision(
+            decision,
+            word: word,
+            activeLanguage: .ru,
+            originalText: text
+        )
+    }
+
+    @discardableResult
+    private func applyRetypeDecision(
+        _ decision: LayoutDecision,
+        word: CommittedWord,
+        activeLanguage: LanguageID,
+        originalText originalTextOverride: String? = nil
+    ) -> Bool {
+        guard let payload = decision.retypePayload else { return false }
+        let corrected = payload.corrected
+        let target = payload.target
+        let correctionKind = payload.kind
+        if activeLanguage != target,
+           appState?.isLanguageDirectionEnabled(source: activeLanguage, target: target) == false {
+            resetPendingSequence(clearCooldown: true)
+            Self.logger.info("decision: switch suppressed (disabled direction \(activeLanguage.rawValue, privacy: .public)→\(target.rawValue, privacy: .public))")
+            return true
+        }
+        if exclusions.contains(word.bundleID) {
+            resetPendingSequence(clearCooldown: true)
+            Self.logger.info("decision: switch suppressed (excluded app: \(word.bundleID ?? "?", privacy: .public))")
+            return true
+        }
+        let originalText = originalTextOverride ?? detector.mapping.render(word.characters, in: activeLanguage)
+        // Allow keycodes that render as punctuation in the active layout but
+        // as letters in another (e.g. `;` → `ж`, `]` → `ъ`). decide() already
+        // accepted them; double-filtering here would drop legitimate
+        // wrong-layout words like `;le` (should retype to `жду`).
+        let ambiguousChars = detector.mapping.ambiguousWordInternalCharacters
+        guard originalText.allSatisfy({ $0.isLetter || ambiguousChars.contains($0) }) else {
+            resetPendingSequence(clearCooldown: true)
+            return true
+        }
+        if learningCache?.shouldSuppress(
+            original: originalText,
+            corrected: corrected,
+            sourceLanguage: activeLanguage,
+            targetLanguage: target,
+            bundleID: word.bundleID
+        ) == true {
+            resetPendingSequence(clearCooldown: true)
+            Self.logger.info("decision: switch suppressed (learned exception)")
+            return true
+        }
+        let candidate = PendingRetypeCandidate(
+            word: word,
+            activeLanguage: activeLanguage,
+            targetLanguage: target,
+            corrected: corrected,
+            originalText: originalText,
+            correctionKind: correctionKind
+        )
+        guard !isRetyping else { return true }
+
+        let extendEnabled = appState?.autoExtendRecentAmbiguous == true
+        Self.logger.info("trigger: \"\(originalText, privacy: .public)\" → \"\(corrected, privacy: .public)\" target=\(target.rawValue, privacy: .public) extend=\(extendEnabled, privacy: .public) history=\(self.committedHistory.count, privacy: .public)")
+        if extendEnabled {
+            let retroactive = collectRetroactiveCandidates(
+                currentTarget: target,
+                activeLanguage: activeLanguage
+            )
+            if !retroactive.isEmpty {
+                Self.logger.info("auto-extend: \(retroactive.count, privacy: .public) retroactive word(s) target=\(target.rawValue, privacy: .public)")
+                sequenceDetector.reset()
+                retypeDispatcher.dispatch(retroactive + [candidate])
+                return true
+            }
+        }
+
+        sequenceDetector.ingest(candidate)
+        return true
     }
 
     /// Walks back through `committedHistory` (excluding the just-committed word) collecting
@@ -312,12 +564,20 @@ final class TypingPipeline {
                 buffer: prior.characters,
                 activeLanguage: activeLanguage,
                 autoAddRomanianDiacritics: appState?.autoAddRomanianDiacritics == true,
-                correctSingleCharacterWords: true
+                autoAddRussianYo: appState?.autoAddRussianYo == true,
+                correctDoubleCapitals: appState?.correctDoubleCapitals == true,
+                correctDuplicateLetters: appState?.correctDuplicateLetters == true,
+                correctCommonTypos: appState?.correctCommonTypos == true,
+                correctSingleCharacterWords: true,
+                allowedTargetLanguages: allowedCrossLayoutTargets(from: activeLanguage),
+                thresholds: currentDetectionThresholds
             )
-            guard case .switchAndRetype(let corrected, let target) = decision, target == currentTarget else {
+            guard let payload = decision.retypePayload, payload.target == currentTarget else {
                 Self.logger.info("auto-extend stop: decision=\(String(describing: decision), privacy: .public)")
                 break
             }
+            let corrected = payload.corrected
+            let target = payload.target
             let priorOriginal = detector.mapping.render(prior.characters, in: activeLanguage)
             Self.logger.info("auto-extend pick: \"\(priorOriginal, privacy: .public)\" → \"\(corrected, privacy: .public)\"")
             retroactive.append(PendingRetypeCandidate(
@@ -325,7 +585,8 @@ final class TypingPipeline {
                 activeLanguage: activeLanguage,
                 targetLanguage: target,
                 corrected: corrected,
-                originalText: priorOriginal
+                originalText: priorOriginal,
+                correctionKind: payload.kind
             ))
         }
         return retroactive.reversed()

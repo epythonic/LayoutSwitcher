@@ -14,6 +14,12 @@ protocol SpellChecking {
         inSpellDocumentWithTag tag: Int,
         wordCount: UnsafeMutablePointer<Int>?
     ) -> NSRange
+    func guesses(
+        forWordRange range: NSRange,
+        in string: String,
+        language: String?,
+        inSpellDocumentWithTag tag: Int
+    ) -> [String]?
     var availableLanguages: [String] { get }
 }
 
@@ -37,7 +43,7 @@ final class SystemSpellCheckerDictionary: WordDictionary {
     /// Creates system-backed dictionary adapter with optional checker/cache overrides.
     init(
         language: LanguageID,
-        checker: any SpellChecking = NSSpellChecker.shared,
+        checker: any SpellChecking,
         cacheCapacity: Int = SystemSpellCheckerDictionary.defaultCacheCapacity
     ) {
         self.language = language
@@ -95,7 +101,7 @@ final class SystemSpellCheckerDictionary: WordDictionary {
     }
 
     /// Maps internal language identifier to `NSSpellChecker` language code.
-    private static func isoCode(for language: LanguageID) -> String {
+    static func isoCode(for language: LanguageID) -> String {
         switch language {
         case .en: return "en"
         case .ru: return "ru"

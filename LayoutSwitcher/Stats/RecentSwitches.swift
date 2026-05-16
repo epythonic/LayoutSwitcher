@@ -19,7 +19,7 @@ struct RecentSwitchEntry: Identifiable, Codable, Sendable {
     }
 
     init(
-        id: UUID = UUID(),
+        id: UUID,
         original: String,
         corrected: String,
         bundleID: String?,
@@ -49,11 +49,36 @@ final class RecentSwitches {
     private(set) var entries: [RecentSwitchEntry] = []
     private let capacity: Int = 200
     private let defaults: UserDefaults
+    private let makeEntryID: @MainActor () -> UUID
 
     /// Loads persisted history (empty on first launch / decode failure).
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults,
+        makeEntryID: @escaping @MainActor () -> UUID
+    ) {
         self.defaults = defaults
+        self.makeEntryID = makeEntryID
         self.entries = Self.load(from: defaults)
+    }
+
+    /// Inserts a new entry with an injected identifier, then persists it.
+    func record(
+        original: String,
+        corrected: String,
+        bundleID: String?,
+        bundleName: String?,
+        kind: RecentSwitchEntry.Kind,
+        timestamp: Date
+    ) {
+        record(RecentSwitchEntry(
+            id: makeEntryID(),
+            original: original,
+            corrected: corrected,
+            bundleID: bundleID,
+            bundleName: bundleName,
+            kind: kind,
+            timestamp: timestamp
+        ))
     }
 
     /// Inserts new entry at head, trims tail to capacity, persists to defaults.

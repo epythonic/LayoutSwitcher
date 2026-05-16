@@ -8,10 +8,10 @@ struct HybridLanguageScorer: LanguageScoring {
 
     init(
         nGramScorer: NGramLanguageScorer,
-        naturalLanguageScorer: NaturalLanguageScorer? = nil
+        naturalLanguageScorer: NaturalLanguageScorer
     ) {
         self.nGramScorer = nGramScorer
-        self.naturalLanguageScorer = naturalLanguageScorer ?? NaturalLanguageScorer()
+        self.naturalLanguageScorer = naturalLanguageScorer
     }
 
     func score(_ text: String, language: LanguageID) -> LanguageScore {

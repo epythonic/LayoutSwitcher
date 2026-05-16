@@ -3,11 +3,16 @@ import SwiftUI
 
 /// Settings tab showing every auto/manual switch with filters and clear action.
 struct HistoryTab: View {
+    /// Recent switch history model rendered by the table.
     @Bindable var recents: RecentSwitches
+    /// Current kind filter selected by the segmented control.
     @State private var filter: KindFilter = .all
+    /// Case-insensitive app-name or bundle-id filter text.
     @State private var appFilter: String = ""
+    /// Injected pasteboard writer used by tests to avoid the real clipboard.
     private let clipboardWrite: @MainActor (String) -> Void
 
+    /// Creates a history tab with injectable clipboard side effect.
     init(
         recents: RecentSwitches,
         clipboardWrite: @escaping @MainActor (String) -> Void = { payload in
@@ -22,9 +27,17 @@ struct HistoryTab: View {
 
     /// Filter selector for switch kind (auto / manual / all).
     enum KindFilter: String, CaseIterable, Identifiable, Sendable {
-        case all, auto, manual
+        /// Shows all history entries.
+        case all
+        /// Shows automatic correction entries only.
+        case auto
+        /// Shows manual hotkey action entries only.
+        case manual
+
+        /// Stable SwiftUI identity for picker rows.
         var id: Self { self }
 
+        /// Localized title displayed in the segmented control.
         var localizedTitle: String {
             switch self {
             case .all: String(localized: "settings.history.filter.all")
@@ -57,7 +70,7 @@ struct HistoryTab: View {
 
             Table(filteredEntries) {
                 TableColumn(String(localized: "settings.history.column.time")) { entry in
-                    Text(Self.timestampFormatter.string(from: entry.timestamp))
+                    Text(Self.displayTimestampString(for: entry.timestamp))
                         .font(.caption.monospaced())
                 }
                 .width(min: 80, ideal: 100)
@@ -136,11 +149,11 @@ struct HistoryTab: View {
     /// Builds TSV-like export payload for recent switch entries.
     static func exportPayload(
         for entries: [RecentSwitchEntry],
-        formatter: DateFormatter = Self.exportFormatter
+        timestampStringProvider: @MainActor (Date) -> String = Self.exportTimestampString
     ) -> String {
         let header = "time\tapp\toriginal\tcorrected\tkind"
         let body = entries.map { entry in
-            let time = formatter.string(from: entry.timestamp)
+            let time = timestampStringProvider(entry.timestamp)
             let app = entry.bundleName ?? entry.bundleID ?? ""
             let kind = entry.kind == .auto ? "auto" : "manual"
             return "\(time)\t\(app)\t\(entry.original)\t\(entry.corrected)\t\(kind)"
@@ -148,15 +161,20 @@ struct HistoryTab: View {
         return ([header] + [body]).joined(separator: "\n")
     }
 
-    private static let timestampFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f
-    }()
+    /// Formats the on-screen history timestamp without shared mutable formatter state.
+    private static func displayTimestampString(for date: Date) -> String {
+        timestampString(for: date, dateFormat: "HH:mm:ss")
+    }
 
-    private static let exportFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return f
-    }()
+    /// Formats exported history timestamps without shared mutable formatter state.
+    private static func exportTimestampString(for date: Date) -> String {
+        timestampString(for: date, dateFormat: "yyyy-MM-dd HH:mm:ss")
+    }
+
+    /// Creates a short-lived formatter to avoid static reference-type shared state.
+    private static func timestampString(for date: Date, dateFormat: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = dateFormat
+        return formatter.string(from: date)
+    }
 }

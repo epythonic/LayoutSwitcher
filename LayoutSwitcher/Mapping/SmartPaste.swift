@@ -7,7 +7,7 @@ import os
 /// of the clipboard before issuing ⌘V. Subsequent typing then continues in the
 /// expected layout without a manual switch.
 @MainActor
-final class SmartPaste {
+struct SmartPaste {
     private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "SmartPaste")
     private static let maxClipboardLength = SelectionTextConverter.absoluteMaxSelectionLength
 
@@ -22,26 +22,7 @@ final class SmartPaste {
         case tooLong
     }
 
-    /// Production initializer wiring `NSPasteboard.general` and CG event posting.
-    init(inputSources: any InputSourceManaging) {
-        self.inputSources = inputSources
-        self.pasteboardRead = { NSPasteboard.general.string(forType: .string) }
-        self.postKeyEvent = { keyCode, flags in
-            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
-                return
-            }
-            down.flags = flags
-            up.flags = flags
-            SyntheticEventFilter.tag(down)
-            SyntheticEventFilter.tag(up)
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
-        }
-        self.sleep = { ns in try? await Task.sleep(nanoseconds: ns) }
-    }
-
-    /// Test-only initializer with injected collaborators.
+    /// Creates smart paste with explicit side-effect collaborators.
     init(
         inputSources: any InputSourceManaging,
         pasteboardRead: @escaping @MainActor () -> String?,
@@ -52,6 +33,20 @@ final class SmartPaste {
         self.pasteboardRead = pasteboardRead
         self.postKeyEvent = postKeyEvent
         self.sleep = sleep
+    }
+
+    /// Posts one synthetic key press tagged for event-tap filtering.
+    static func postKey(keyCode: CGKeyCode, flags: CGEventFlags) {
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
+            return
+        }
+        down.flags = flags
+        up.flags = flags
+        SyntheticEventFilter.tag(down)
+        SyntheticEventFilter.tag(up)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 
     /// Reads clipboard, picks the layout matching its language, posts ⌘V.

@@ -4,11 +4,35 @@ import Foundation
 /// held briefly in case more retype-eligible words follow. Multi-word bursts
 /// are coalesced into a single retype block.
 struct PendingRetypeCandidate: Sendable {
+    /// Committed word snapshot that triggered a retype decision.
     let word: CommittedWord
+    /// Language active when the word was typed.
     let activeLanguage: LanguageID
+    /// Language selected by the detector for retyping.
     let targetLanguage: LanguageID
+    /// Corrected text to emit.
     let corrected: String
+    /// Original rendered text used for cooldown and analytics.
     let originalText: String
+    /// Correction category used for sound and visual feedback.
+    let correctionKind: CorrectionFeedbackKind
+
+    /// Creates a pending retype candidate with optional feedback category.
+    init(
+        word: CommittedWord,
+        activeLanguage: LanguageID,
+        targetLanguage: LanguageID,
+        corrected: String,
+        originalText: String,
+        correctionKind: CorrectionFeedbackKind = .layoutSwitch
+    ) {
+        self.word = word
+        self.activeLanguage = activeLanguage
+        self.targetLanguage = targetLanguage
+        self.corrected = corrected
+        self.originalText = originalText
+        self.correctionKind = correctionKind
+    }
 }
 
 /// Sequence-detection state machine: collects pending retype candidates,
@@ -18,9 +42,12 @@ struct PendingRetypeCandidate: Sendable {
 /// it spans both single-word and sequence paths.
 @MainActor
 final class SequenceDetector {
+    /// Delay used to wait for a possible next retype-eligible word.
     static let lookaheadDelay = Duration.milliseconds(120)
+    /// Maximum pause between words that can still be grouped into one sequence.
     static let longPauseThreshold: TimeInterval = 2.0
 
+    /// Pending candidates currently held for sequence coalescing.
     private(set) var candidates: [PendingRetypeCandidate] = []
     private var flushTask: Task<Void, Never>?
     private let sleepBeforeFlush: @MainActor @Sendable (Duration) async -> Void
@@ -33,12 +60,12 @@ final class SequenceDetector {
     /// Owner inspects `count` and dispatches to single- vs multi-word path.
     var onFlushReady: ([PendingRetypeCandidate]) -> Void = { _ in }
 
-    init(sleepBeforeFlush: @escaping @MainActor @Sendable (Duration) async -> Void = { duration in
-        try? await Task.sleep(for: duration)
-    }) {
+    /// Creates a detector with an injected delay primitive supplied by the owner.
+    init(sleepBeforeFlush: @escaping @MainActor @Sendable (Duration) async -> Void) {
         self.sleepBeforeFlush = sleepBeforeFlush
     }
 
+    /// Adds a candidate and schedules or performs flush when the sequence is complete.
     func ingest(_ candidate: PendingRetypeCandidate) {
         if let last = candidates.last, !canAppend(candidate, after: last) {
             reset()
@@ -52,6 +79,7 @@ final class SequenceDetector {
         scheduleFlush()
     }
 
+    /// Clears pending candidates and cancels any delayed flush.
     func reset() {
         flushTask?.cancel()
         flushTask = nil
@@ -65,6 +93,7 @@ final class SequenceDetector {
         }
         return candidate.activeLanguage == previous.activeLanguage
             && candidate.targetLanguage == previous.targetLanguage
+            && candidate.correctionKind == previous.correctionKind
             && candidate.word.bundleID == previous.word.bundleID
     }
 

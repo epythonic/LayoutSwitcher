@@ -3,21 +3,27 @@ import SwiftUI
 
 /// Minimal recorder control that captures the next keydown and emits a hotkey definition.
 struct KeyRecorderView: NSViewRepresentable {
+    /// Whether the recorder should currently capture the next keydown.
     @Binding var isRecording: Bool
+    /// Receives a captured definition or `nil` when recording is cancelled.
     let onCommit: (HotkeyDefinition?) -> Void
 
+    /// Creates the AppKit event-monitor coordinator.
     func makeCoordinator() -> Coordinator {
         Coordinator(onCommit: onCommit)
     }
 
+    /// Provides an invisible AppKit host view for local event monitoring.
     func makeNSView(context: Context) -> NSView {
         NSView(frame: .zero)
     }
 
+    /// Starts or stops recording based on SwiftUI state.
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.setRecording(isRecording)
     }
 
+    /// Ensures the local monitor is removed when SwiftUI tears down the view.
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
         coordinator.stopRecording()
     }
@@ -25,10 +31,14 @@ struct KeyRecorderView: NSViewRepresentable {
     /// Coordinates an AppKit key event monitor that emits a single hotkey definition.
     @MainActor
     final class Coordinator: NSObject {
+        /// AppKit local event monitor token.
         private var monitor: Any?
+        /// Current capture state used to keep recording idempotent.
         private var isRecording = false
+        /// Commit callback forwarded from `KeyRecorderView`.
         private let onCommit: (HotkeyDefinition?) -> Void
 
+        /// Creates a coordinator with the recorder commit callback.
         init(onCommit: @escaping (HotkeyDefinition?) -> Void) {
             self.onCommit = onCommit
         }

@@ -9,27 +9,40 @@ import os
 final class InputSourceManager {
     private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "InputSource")
 
+    /// Reads the currently selected keyboard input source.
     typealias CurrentInputSourceProvider = @MainActor () -> InputSource?
+    /// Reads the system list of available keyboard layouts.
     typealias KeyboardLayoutsProvider = @MainActor () -> [InputSource]
+    /// Selects a concrete keyboard input source and returns the Carbon status.
     typealias InputSourceSelector = @MainActor (InputSource) -> OSStatus
+    /// Registers system layout-change observation and returns an opaque observer handle.
     typealias SystemChangeObserverRegistrar = @MainActor (InputSourceManager) -> UnsafeMutableRawPointer?
+    /// Removes a previously registered layout-change observer.
     typealias SystemChangeObserverRemover = @MainActor (UnsafeMutableRawPointer) -> Void
 
-    /// Captured snapshot of current selected keyboard layout.
+    /// Captured snapshot of the currently selected keyboard layout.
     private(set) var current: InputSource?
-    /// Callback fired when selected layout actually changes.
+    /// Callback fired when the selected layout actually changes.
     var onChange: ((InputSource?) -> Void)?
-    /// Metadata-only callback fired when selected layout changes.
+    /// Metadata-only callback fired when the selected layout changes.
     var onSnapshotChange: ((InputSourceSnapshot?) -> Void)?
 
+    /// Opaque observer token returned by the distributed notification center.
     private var observerHandle: UnsafeMutableRawPointer?
+    /// Injected current-source provider.
     private let currentInputSourceProvider: CurrentInputSourceProvider
+    /// Injected keyboard-layout list provider.
     private let keyboardLayoutsProvider: KeyboardLayoutsProvider
+    /// Injected input-source selector.
     private let selectInputSource: InputSourceSelector
+    /// Injected system-change observer registrar.
     private let observeSystemChanges: SystemChangeObserverRegistrar
+    /// Injected system-change observer remover.
     private let removeSystemChangeObserver: SystemChangeObserverRemover
 
-    /// Creates manager and loads current layout immediately.
+    /// Creates the manager and loads the current layout immediately.
+    ///
+    /// All system interactions are injected so tests can avoid real TIS state.
     init(
         currentInputSourceProvider: @escaping CurrentInputSourceProvider = InputSourceManager.currentInputSource,
         keyboardLayoutsProvider: @escaping KeyboardLayoutsProvider = InputSourceManager.systemKeyboardLayouts,

@@ -16,7 +16,7 @@ struct FocusedAppObserverTests {
         var bundleID: String?
         var localizedName: String?
         var isSecureField: Bool
-        var onChange: (() -> Void)?
+        var onChange: (@MainActor () -> Void)?
 
         init(bundleID: String? = nil, localizedName: String? = nil, isSecureField: Bool = false) {
             self.bundleID = bundleID
@@ -89,5 +89,32 @@ struct FocusedAppObserverTests {
 
         observer.stop()
         #expect((removedToken as AnyObject?) === token)
+    }
+
+    @Test func startIsIdempotentAndDoesNotRegisterDuplicateObservers() {
+        let token = NSObject()
+        var observeCount = 0
+        var snapshotReadCount = 0
+
+        let observer = FocusedAppObserver(
+            roleProvider: StubRoleProvider(role: nil),
+            currentAppSnapshotProvider: {
+                snapshotReadCount += 1
+                return WorkspaceAppSnapshot(bundleID: "com.initial.app", localizedName: "Initial App")
+            },
+            observeWorkspaceActivation: { _ in
+                observeCount += 1
+                return token
+            },
+            removeWorkspaceObserver: { _ in }
+        )
+
+        observer.start()
+        observer.start()
+
+        #expect(observeCount == 1)
+        #expect(snapshotReadCount == 1)
+        #expect(observer.bundleID == "com.initial.app")
+        #expect(observer.localizedName == "Initial App")
     }
 }
