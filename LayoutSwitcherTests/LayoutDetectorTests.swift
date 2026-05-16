@@ -169,6 +169,34 @@ struct LayoutDetectorTests {
         #expect(decision.retypePayload?.kind == .cupertino)
     }
 
+    @Test func cupertinoFallsBackWhenDictionaryLacksSuggestionCandidate() {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: InMemoryDictionary(language: .en, words: ["bokk"]),
+                .ru: InMemoryDictionary(language: .ru, words: []),
+                .uk: InMemoryDictionary(language: .uk, words: []),
+                .ro: InMemoryDictionary(language: .ro, words: [])
+            ],
+            ngrams: [
+                .en: NGramModels.english(),
+                .ru: NGramModels.russian(),
+                .uk: NGramModels.ukrainian(),
+                .ro: NGramModels.romanian()
+            ],
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["bokk": ["book"]]),
+            languageScorer: FixedTextScoreScorer(scores: ["bokk": -1.0, "book": 1.0]),
+            thresholds: DetectionThresholds(cupertinoScoreMargin: 0.0)
+        )
+        let decision = detector.decide(
+            buffer: chars("bokk", language: .en),
+            activeLanguage: .en,
+            correctCommonTypos: true
+        )
+
+        #expect(decision == .switchAndRetype(corrected: "book", target: .en))
+    }
+
     @Test func cupertinoKeepsCommonTypoWhenDisabled() {
         let detector = LayoutDetector(
             mapping: RuEnQwertyMapping(),
@@ -188,6 +216,60 @@ struct LayoutDetectorTests {
         )
 
         #expect(decision == .keep)
+    }
+
+    @Test func cupertinoCorrectsRussianTypoWhenActiveDictionaryAlreadyHasMatch() {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: EmbeddedDictionaries.english(),
+                .ru: InMemoryDictionary(language: .ru, words: ["привет", "приввет"]),
+                .uk: EmbeddedDictionaries.ukrainian(),
+                .ro: EmbeddedDictionaries.romanian()
+            ],
+            ngrams: [
+                .en: NGramModels.english(),
+                .ru: NGramModels.russian(),
+                .uk: NGramModels.ukrainian(),
+                .ro: NGramModels.romanian()
+            ],
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["приввет": ["привет"]]),
+            thresholds: .default
+        )
+        let decision = detector.decide(
+            buffer: chars("приввет", language: .ru),
+            activeLanguage: .ru,
+            correctCommonTypos: true
+        )
+
+        #expect(decision == .switchAndRetypeWithFeedback(corrected: "привет", target: .ru, kind: .cupertino))
+    }
+
+    @Test func cupertinoCorrectsRomanianTypoWhenActiveDictionaryAlreadyHasMatch() {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: EmbeddedDictionaries.english(),
+                .ru: EmbeddedDictionaries.russian(),
+                .uk: EmbeddedDictionaries.ukrainian(),
+                .ro: InMemoryDictionary(language: .ro, words: ["bună", "bunaa"])
+            ],
+            ngrams: [
+                .en: NGramModels.english(),
+                .ru: NGramModels.russian(),
+                .uk: NGramModels.ukrainian(),
+                .ro: NGramModels.romanian()
+            ],
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: ["bunaa": ["bună"]]),
+            thresholds: DetectionThresholds(cupertinoScoreMargin: 0.0)
+        )
+        let decision = detector.decide(
+            buffer: chars("bunaa", language: .ro),
+            activeLanguage: .ro,
+            correctCommonTypos: true
+        )
+
+        #expect(decision == .switchAndRetypeWithFeedback(corrected: "bună", target: .ro, kind: .cupertino))
     }
 
     @Test func cupertinoDoesNotOverrideWrongLayoutSwitch() {
@@ -672,5 +754,14 @@ private struct FixedScoreScorer: LanguageScoring {
 
     func score(_ text: String, language: LanguageID) -> LanguageScore {
         scores[language] ?? LanguageScore(naturalLanguageProbability: nil, nGramScore: -.infinity)
+    }
+}
+
+private struct FixedTextScoreScorer: LanguageScoring {
+    let scores: [String: Double]
+
+    func score(_ text: String, language: LanguageID) -> LanguageScore {
+        let score = scores[text] ?? -1.0
+        return LanguageScore(naturalLanguageProbability: nil, nGramScore: score)
     }
 }

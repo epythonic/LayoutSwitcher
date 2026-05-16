@@ -430,7 +430,22 @@ struct LayoutDetector {
                 return .switchAndRetype(corrected: target.text, target: target.language)
             }
             Self.logger.debug("keep raw=\"\(raw, privacy: .public)\" active dict=true")
+            if let correction = typoCorrectedDecision(
+                for: raw,
+                language: activeLanguage,
+                thresholds: activeThresholds
+            ) {
+                return correction
+            }
             return .keep
+        }
+
+        if let correction = typoCorrectedDecision(
+            for: raw,
+            language: activeLanguage,
+            thresholds: activeThresholds
+        ) {
+            return correction
         }
 
         // 2. Non-active dict matches.
@@ -472,23 +487,32 @@ struct LayoutDetector {
                 return .switchAndRetype(corrected: best.text, target: best.language)
             }
         }
-        if correctCommonTypos,
-           let activeDictionary = dictionaries[activeLanguage],
-           let spellingSuggestionProvider {
-            let corrector = CupertinoCorrector()
-            if let correction = corrector.correction(
-                for: raw,
-                language: activeLanguage,
-                dictionary: activeDictionary,
-                suggestionProvider: spellingSuggestionProvider,
-                scorer: languageScorer,
-                thresholds: activeThresholds
-            ) {
-                Self.logger.debug("switch lang=\(activeLanguage.rawValue, privacy: .public) text=\"\(correction.corrected, privacy: .public)\" cupertino=true distance=\(correction.editDistance, privacy: .public) scoreGain=\(correction.scoreGain, privacy: .public)")
-                return .switchAndRetypeWithFeedback(corrected: correction.corrected, target: activeLanguage, kind: .cupertino)
-            }
-        }
         return .keep
+    }
+
+    private func typoCorrectedDecision(
+        for raw: String,
+        language: LanguageID,
+        thresholds: DetectionThresholds
+    ) -> LayoutDecision? {
+        guard correctCommonTypos,
+              let activeDictionary = dictionaries[language],
+              let spellingSuggestionProvider else {
+            return nil
+        }
+        let corrector = CupertinoCorrector()
+        guard let correction = corrector.correction(
+            for: raw,
+            language: language,
+            dictionary: activeDictionary,
+            suggestionProvider: spellingSuggestionProvider,
+            scorer: languageScorer,
+            thresholds: thresholds
+        ) else {
+            return nil
+        }
+        Self.logger.debug("switch lang=\(language.rawValue, privacy: .public) text=\"\(correction.corrected, privacy: .public)\" cupertino distance=\(correction.editDistance, privacy: .public) scoreGain=\(correction.scoreGain, privacy: .public)")
+        return .switchAndRetypeWithFeedback(corrected: correction.corrected, target: language, kind: .cupertino)
     }
 
     /// Evaluates the already-rendered token text for corrections that do not require

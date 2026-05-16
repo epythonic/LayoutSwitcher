@@ -24,13 +24,12 @@ struct CupertinoCorrector {
     ) -> Correction? {
         guard raw.count >= thresholds.cupertinoMinLength,
               raw.count <= thresholds.maxWordLength,
-              raw.allSatisfy(\.isLetter),
-              dictionary.contains(raw) == false else {
+              raw.allSatisfy(\.isLetter) else {
             return nil
         }
 
         let rawNormalized = InMemoryDictionary.normalize(raw)
-        let validSuggestions = suggestionProvider.suggestions(for: raw, language: language)
+        let suggestions = suggestionProvider.suggestions(for: raw, language: language)
             .lazy
             .map { Self.applyCasing(of: raw, to: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             .filter { candidate in
@@ -39,7 +38,6 @@ struct CupertinoCorrector {
                     && candidate.allSatisfy(\.isLetter)
                     && InMemoryDictionary.normalize(candidate) != rawNormalized
                     && Self.wordMatchesAlphabet(candidate, of: language)
-                    && dictionary.contains(candidate)
             }
             .reduce(into: [String]()) { candidates, candidate in
                 let normalized = InMemoryDictionary.normalize(candidate)
@@ -48,6 +46,8 @@ struct CupertinoCorrector {
                 }
             }
 
+        let dictionaryValidatedSuggestions = suggestions.filter { dictionary.contains($0) }
+        let validSuggestions = dictionaryValidatedSuggestions.isEmpty ? suggestions : dictionaryValidatedSuggestions
         guard let first = validSuggestions.first else { return nil }
         let distance = Self.damerauLevenshteinDistance(raw.lowercased(), first.lowercased())
         guard distance > 0,

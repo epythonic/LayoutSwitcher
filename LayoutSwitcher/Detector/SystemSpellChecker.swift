@@ -35,6 +35,7 @@ final class SystemSpellCheckerDictionary: WordDictionary {
 
     let language: LanguageID
     let isoLanguage: String
+    private let effectiveLanguage: String
     private let checker: any SpellChecking
     private let cacheCapacity: Int
     private var cache: [String: Bool] = [:]
@@ -49,6 +50,10 @@ final class SystemSpellCheckerDictionary: WordDictionary {
         self.language = language
         self.isoLanguage = Self.isoCode(for: language)
         self.checker = checker
+        self.effectiveLanguage = Self.resolveLanguageCode(
+            requested: self.isoLanguage,
+            availableLanguages: checker.availableLanguages
+        )
         self.cacheCapacity = cacheCapacity
         if !checker.availableLanguages.contains(isoLanguage) {
             Self.logger.notice("System spell checker has no dictionary for \(self.isoLanguage, privacy: .public); falling back to lookups will always return false")
@@ -90,7 +95,7 @@ final class SystemSpellCheckerDictionary: WordDictionary {
         let range = checker.checkSpelling(
             of: word,
             startingAt: 0,
-            language: isoLanguage,
+            language: effectiveLanguage,
             wrap: false,
             inSpellDocumentWithTag: 0,
             wordCount: &wordCount
@@ -108,5 +113,26 @@ final class SystemSpellCheckerDictionary: WordDictionary {
         case .ro: return "ro"
         case .uk: return "uk"
         }
+    }
+
+    /// Resolves the closest installed spell-check language code for a base ISO code.
+    static func resolveLanguageCode(requested isoLanguage: String, availableLanguages: [String]) -> String {
+        if availableLanguages.contains(isoLanguage) { return isoLanguage }
+        if let exactLocale = availableLanguages.first(where: { $0.lowercased() == isoLanguage.lowercased() }) {
+            return exactLocale
+        }
+        let normalized = isoLanguage.lowercased()
+        if let locale = availableLanguages.first(where: {
+            $0.lowercased().hasPrefix("\(normalized)-") || $0.lowercased().hasPrefix("\(normalized)_")
+        }) {
+            return locale
+        }
+        if let locale = availableLanguages.first(where: {
+            let prefix = String($0.lowercased().prefix(2))
+            return prefix == normalized
+        }) {
+            return locale
+        }
+        return isoLanguage
     }
 }

@@ -20,10 +20,14 @@ struct SystemSpellingSuggestionProvider: SpellingSuggestionProviding {
     func suggestions(for word: String, language: LanguageID) -> [String] {
         guard !word.isEmpty else { return [] }
         let range = NSRange(location: 0, length: word.utf16.count)
+        let spellLanguage = SystemSpellCheckerDictionary.resolveLanguageCode(
+            requested: SystemSpellCheckerDictionary.isoCode(for: language),
+            availableLanguages: checker.availableLanguages
+        )
         return checker.guesses(
             forWordRange: range,
             in: word,
-            language: SystemSpellCheckerDictionary.isoCode(for: language),
+            language: spellLanguage,
             inSpellDocumentWithTag: 0
         ) ?? []
     }
