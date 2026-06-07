@@ -1416,6 +1416,32 @@ struct TypingPipelineTests {
         ]
     }
 
+    /// Pins the stateless cross-layout precedence end-to-end (EN-active layout).
+    /// `expectedCorrected == nil` means the word must be kept (no retype).
+    /// Keep this table in sync with docs/DecisionModel.md.
+    @Test func crossLayoutPrecedenceTableProducesExpectedOutcomes() async throws {
+        let cases: [(name: String, typed: String, expectedCorrected: String?)] = [
+            ("wrong-layout EN→RU switches", "ghbdtn", "привет"),
+            ("visible English dictionary word is kept", "book", nil),
+            ("visible English dictionary word is kept (accent)", "accent", nil)
+        ]
+        for testCase in cases {
+            let fixture = try Self.makeFixture(retypeSucceeds: true)
+            for event in try Self.wordEvents(testCase.typed, language: .en) {
+                fixture.pipeline.handle(event)
+            }
+            if let expected = testCase.expectedCorrected {
+                await Self.waitUntil { fixture.recents.entries.first?.corrected == expected }
+                #expect(fixture.recents.entries.first?.corrected == expected, "\(testCase.name)")
+                #expect(fixture.recents.entries.first?.original == testCase.typed, "\(testCase.name)")
+            } else {
+                await Self.waitForAsyncWorkWindow(nanoseconds: 50_000_000)
+                #expect(fixture.recents.entries.isEmpty, "\(testCase.name): expected no retype")
+                #expect(fixture.output.selectedLayouts.isEmpty, "\(testCase.name): expected no layout switch")
+            }
+        }
+    }
+
     @Test func presentationModeSuppressesAutoSwitch() async throws {
         let fixture = try Self.makeFixture(retypeSucceeds: true, presentationDetector: PresentationModeDetector(
             frontmostBundleIDProvider: { "com.apple.iWork.Keynote" }

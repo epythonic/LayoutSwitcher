@@ -233,16 +233,13 @@ final class TypingPipeline {
                 return
             }
         }
-        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) {
-            guard renderedLanguage == .ru else { continue }
-            let renderedText = detector.mapping.render(word.characters, in: renderedLanguage)
-            guard renderedText != word.text,
-                  visibleCorrectionLanguage(for: renderedText, fallback: renderedLanguage) == renderedLanguage else {
-                continue
-            }
-            if applyRenderedRussianYoCorrection(text: renderedText, word: word) {
-                return
-            }
+        // Rendered-Russian ё restoration: when the active word, reinterpreted in
+        // Russian, is a confident Russian word that needs ё, but the visible text
+        // itself was not correctable (so the block above was skipped). Scoped to
+        // Russian because ё is the only alphabet-internal restoration of this kind.
+        if let renderedRussian = confidentRenderedText(for: word, in: .ru),
+           applyRenderedRussianYoCorrection(text: renderedRussian, word: word) {
+            return
         }
 
         let decision = detector.decide(
@@ -307,11 +304,26 @@ final class TypingPipeline {
         return nil
     }
 
-    private func preferredCrossLayoutDecisionBeforeVisibleCorrection(
+    /// Inputs shared by the ordered cross-layout decision strategies, computed
+    /// once per committed word. `visibleDecision` and `crossLayoutSwitch` are
+    /// evaluated eagerly to match the original single-pass behaviour.
+    private struct DecisionContext {
+        let word: CommittedWord
+        let activeLanguage: LanguageID
+        /// Language the already-typed text belongs to (`visibleCorrectionLanguage`).
+        let visibleLanguage: LanguageID
+        /// Same-language correction of the visible text.
+        let visibleDecision: LayoutDecision
+        /// Bare-detector layout switch, only when it is an allowed switch to a
+        /// different layout; nil otherwise.
+        let crossLayoutSwitch: LayoutDecision?
+    }
+
+    private func makeDecisionContext(
         word: CommittedWord,
         activeLanguage: LanguageID,
         visibleLanguage: LanguageID
-    ) -> LayoutDecision? {
+    ) -> DecisionContext {
         let rawLayoutDecision = detector.decide(
             buffer: word.characters,
             activeLanguage: activeLanguage,
@@ -319,53 +331,111 @@ final class TypingPipeline {
             allowedTargetLanguages: allowedCrossLayoutTargets(from: activeLanguage),
             thresholds: currentDetectionThresholds
         )
-        let layoutSwitchDecision: LayoutDecision?
+        let crossLayoutSwitch: LayoutDecision?
         if let payload = rawLayoutDecision.retypePayload,
            payload.kind == .layoutSwitch,
            payload.target != activeLanguage,
            isRetypeTargetAllowed(payload.target, from: activeLanguage) {
-            layoutSwitchDecision = rawLayoutDecision
+            crossLayoutSwitch = rawLayoutDecision
         } else {
-            layoutSwitchDecision = nil
+            crossLayoutSwitch = nil
         }
-        var activeRenderedDictionaryDecision: LayoutDecision?
-        let visibleDecision = visibleTextCorrectionDecision(text: word.text, language: visibleLanguage)
-        if let contextualDecision = pendingSequenceContextDecision(
+        return DecisionContext(
+            word: word,
+            activeLanguage: activeLanguage,
+            visibleLanguage: visibleLanguage,
+            visibleDecision: visibleTextCorrectionDecision(text: word.text, language: visibleLanguage),
+            crossLayoutSwitch: crossLayoutSwitch
+        )
+    }
+
+    /// Cross-layout decision applied before plain visible-text correction.
+    ///
+    /// The strategies run in strict priority order — the first that returns a
+    /// decision wins; nil means "no opinion, try the next". A nil result from the
+    /// whole chain lets `evaluate` fall through to visible-text correction. This
+    /// order is the contract; keep it in sync with docs/DecisionModel.md.
+    private func preferredCrossLayoutDecisionBeforeVisibleCorrection(
+        word: CommittedWord,
+        activeLanguage: LanguageID,
+        visibleLanguage: LanguageID
+    ) -> LayoutDecision? {
+        let context = makeDecisionContext(
             word: word,
             activeLanguage: activeLanguage,
             visibleLanguage: visibleLanguage
-        ) {
-            return contextualDecision
+        )
+        return pendingSequenceContextDecision(context)                 // 1. continue an in-flight retype sequence
+            ?? recentAutoSwitchContextDecision(context)                // 2. extend a just-applied auto-switch
+            ?? visibleLatinOutranksRenderedDecision(context)           // 3. trust a real visible EN/RO word
+            ?? visibleNonEnglishDictionaryDecision(context)            // 4. visible non-EN dictionary word
+            ?? renderedCrossLayoutCorrectionDecision(context)          // 5. cross-layout same-language correction
+            ?? activeRenderedDictionaryOrLayoutSwitchDecision(context) // 6. active-layout dict render, else layout switch
+    }
+
+    // 1. A retype sequence is already in flight: reinterpret this word in the
+    //    pending target so the burst stays in one language.
+    private func pendingSequenceContextDecision(_ context: DecisionContext) -> LayoutDecision? {
+        guard let pendingTarget = sequenceDetector.candidates.last?.targetLanguage,
+              pendingTarget != context.visibleLanguage,
+              isRetypeTargetAllowed(pendingTarget, from: context.activeLanguage),
+              isCorrectionLanguageEnabled(pendingTarget) else {
+            return nil
         }
-        if let contextualDecision = recentAutoSwitchContextDecision(
-            word: word,
-            activeLanguage: activeLanguage,
-            visibleLanguage: visibleLanguage
-        ) {
-            return contextualDecision
+        return renderedContextDecision(for: context.word, target: pendingTarget)
+    }
+
+    // 2. The previous word was just auto-switched: extend the same target onto
+    //    this word when the timing/app/separator gates match.
+    private func recentAutoSwitchContextDecision(_ context: DecisionContext) -> LayoutDecision? {
+        guard let target = recentAutoSwitchContextTarget(for: context.word),
+              target != context.visibleLanguage,
+              isRetypeTargetAllowed(target, from: context.activeLanguage),
+              isCorrectionLanguageEnabled(target) else {
+            return nil
         }
-        if shouldVisibleLatinOutrankRenderedCorrection(word.text, activeLanguage: activeLanguage, visibleLanguage: visibleLanguage) {
-            if let visiblePayload = visibleDecision.retypePayload,
-               visiblePayload.target == visibleLanguage,
-               visiblePayload.kind != .layoutSwitch {
-                return visibleDecision
-            }
-            if isKnownVisibleLatinWord(word.text, visibleLanguage: visibleLanguage) {
-                return .keep
-            }
+        return renderedContextDecision(for: context.word, target: target)
+    }
+
+    // 3. The visible text is a genuine Latin (EN/RO) word: prefer a same-language
+    //    correction of it, or keep it, rather than reinterpreting across layouts.
+    private func visibleLatinOutranksRenderedDecision(_ context: DecisionContext) -> LayoutDecision? {
+        guard shouldVisibleLatinOutrankRenderedCorrection(
+            context.word.text,
+            activeLanguage: context.activeLanguage,
+            visibleLanguage: context.visibleLanguage
+        ) else {
+            return nil
         }
-        if visibleLanguage != activeLanguage,
-           visibleLanguage != .en,
-           detector.dictionaries[visibleLanguage]?.contains(word.text) == true {
-            return visibleDecision.retypePayload == nil ? .keep : visibleDecision
+        if let visiblePayload = context.visibleDecision.retypePayload,
+           visiblePayload.target == context.visibleLanguage,
+           visiblePayload.kind != .layoutSwitch {
+            return context.visibleDecision
         }
-        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) where renderedLanguage != visibleLanguage {
-            guard isRetypeTargetAllowed(renderedLanguage, from: activeLanguage) else {
-                continue
-            }
-            let renderedText = detector.mapping.render(word.characters, in: renderedLanguage)
-            guard renderedText != word.text,
-                  visibleCorrectionLanguage(for: renderedText, fallback: renderedLanguage) == renderedLanguage else {
+        if isKnownVisibleLatinWord(context.word.text, visibleLanguage: context.visibleLanguage) {
+            return .keep
+        }
+        return nil
+    }
+
+    // 4. The visible text is a dictionary word in a non-English visible language:
+    //    keep it (or apply its same-language correction) instead of switching.
+    private func visibleNonEnglishDictionaryDecision(_ context: DecisionContext) -> LayoutDecision? {
+        guard context.visibleLanguage != context.activeLanguage,
+              context.visibleLanguage != .en,
+              detector.dictionaries[context.visibleLanguage]?.contains(context.word.text) == true else {
+            return nil
+        }
+        return context.visibleDecision.retypePayload == nil ? .keep : context.visibleDecision
+    }
+
+    // 5. Reinterpreting the keystrokes in another enabled layout yields a
+    //    confident same-language correction (e.g. wrong-layout Cyrillic).
+    private func renderedCrossLayoutCorrectionDecision(_ context: DecisionContext) -> LayoutDecision? {
+        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: context.activeLanguage)
+        where renderedLanguage != context.visibleLanguage {
+            guard isRetypeTargetAllowed(renderedLanguage, from: context.activeLanguage),
+                  let renderedText = confidentRenderedText(for: context.word, in: renderedLanguage) else {
                 continue
             }
             let renderedDecision = visibleTextCorrectionDecision(text: renderedText, language: renderedLanguage)
@@ -375,69 +445,37 @@ final class TypingPipeline {
             }
             return renderedDecision
         }
-        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) where renderedLanguage != visibleLanguage {
-            guard isRetypeTargetAllowed(renderedLanguage, from: activeLanguage) else {
+        return nil
+    }
+
+    // 6. The active-layout render is itself a dictionary word; otherwise fall back
+    //    to the bare detector's cross-layout switch. The layout-switch fallback
+    //    only applies when the visible language is the active one — a different
+    //    visible language means we keep whatever the active render produced.
+    private func activeRenderedDictionaryOrLayoutSwitchDecision(_ context: DecisionContext) -> LayoutDecision? {
+        let activeRendered = activeRenderedDictionaryDecision(context)
+        if context.visibleLanguage != context.activeLanguage {
+            return activeRendered
+        }
+        return activeRendered ?? context.crossLayoutSwitch
+    }
+
+    private func activeRenderedDictionaryDecision(_ context: DecisionContext) -> LayoutDecision? {
+        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: context.activeLanguage)
+        where renderedLanguage != context.visibleLanguage {
+            guard renderedLanguage == context.activeLanguage,
+                  isRetypeTargetAllowed(renderedLanguage, from: context.activeLanguage) else {
                 continue
             }
-            let renderedText = detector.mapping.render(word.characters, in: renderedLanguage)
-            guard renderedLanguage == activeLanguage,
-                  renderedText != word.text,
+            let renderedText = detector.mapping.render(context.word.characters, in: renderedLanguage)
+            guard renderedText != context.word.text,
                   detector.wordMatchesAlphabet(renderedText, of: renderedLanguage),
                   detector.dictionaries[renderedLanguage]?.contains(renderedText) == true else {
                 continue
             }
-            activeRenderedDictionaryDecision = .switchAndRetype(corrected: renderedText, target: renderedLanguage)
-            break
-        }
-        if visibleLanguage != activeLanguage {
-            return activeRenderedDictionaryDecision
-        }
-        return activeRenderedDictionaryDecision ?? layoutSwitchDecision
-    }
-
-    private func pendingSequenceContextDecision(
-        word: CommittedWord,
-        activeLanguage: LanguageID,
-        visibleLanguage: LanguageID
-    ) -> LayoutDecision? {
-        guard let pendingTarget = sequenceDetector.candidates.last?.targetLanguage,
-              pendingTarget != visibleLanguage,
-              isRetypeTargetAllowed(pendingTarget, from: activeLanguage),
-              isCorrectionLanguageEnabled(pendingTarget) else {
-            return nil
-        }
-        let renderedText = detector.mapping.render(word.characters, in: pendingTarget)
-        guard renderedText != word.text,
-              visibleCorrectionLanguage(for: renderedText, fallback: pendingTarget) == pendingTarget else {
-            return nil
-        }
-        // Prefer the literal render over any cupertino "improvement": NSSpellChecker
-        // can propose a typographically-close word ("мур" for "мир") with a higher
-        // scoreGain, but if the rendered text already matches the dictionary then
-        // that's exactly what the user typed and there is no typo to fix.
-        if detector.dictionaries[pendingTarget]?.contains(renderedText) == true {
-            return .switchAndRetype(corrected: renderedText, target: pendingTarget)
-        }
-        let renderedDecision = visibleTextCorrectionDecision(text: renderedText, language: pendingTarget)
-        if let payload = renderedDecision.retypePayload,
-           payload.target == pendingTarget {
-            return renderedDecision
+            return .switchAndRetype(corrected: renderedText, target: renderedLanguage)
         }
         return nil
-    }
-
-    private func recentAutoSwitchContextDecision(
-        word: CommittedWord,
-        activeLanguage: LanguageID,
-        visibleLanguage: LanguageID
-    ) -> LayoutDecision? {
-        guard let target = recentAutoSwitchContextTarget(for: word),
-              target != visibleLanguage,
-              isRetypeTargetAllowed(target, from: activeLanguage),
-              isCorrectionLanguageEnabled(target) else {
-            return nil
-        }
-        return renderedContextDecision(for: word, target: target)
     }
 
     private func recentAutoSwitchContextTarget(for word: CommittedWord) -> LanguageID? {
@@ -477,14 +515,30 @@ final class TypingPipeline {
         return nil
     }
 
-    private func renderedContextDecision(for word: CommittedWord, target: LanguageID) -> LayoutDecision? {
-        let renderedText = detector.mapping.render(word.characters, in: target)
+    /// Renders `word` in `language` and returns the text only when it is a
+    /// confident single-language match: it differs from the visible text and
+    /// `visibleCorrectionLanguage` settles on exactly that language. Central
+    /// guard shared by every rendered/context strategy so the render + alphabet
+    /// check lives in one place instead of being repeated inline.
+    private func confidentRenderedText(for word: CommittedWord, in language: LanguageID) -> String? {
+        let renderedText = detector.mapping.render(word.characters, in: language)
         guard renderedText != word.text,
-              visibleCorrectionLanguage(for: renderedText, fallback: target) == target else {
+              visibleCorrectionLanguage(for: renderedText, fallback: language) == language else {
             return nil
         }
-        // Prefer the literal render when it's already a valid word — see
-        // `pendingSequenceContextDecision` for the same rationale.
+        return renderedText
+    }
+
+    /// Correction for `word` reinterpreted in `target`. Prefers the literal
+    /// render when it is already a valid dictionary word — NSSpellChecker may
+    /// otherwise propose a typographically-close word ("мур" for "мир") with a
+    /// higher scoreGain, but a dictionary hit is exactly what the user typed, so
+    /// there is no typo to fix. Otherwise applies same-language visible-text
+    /// corrections (ё, double-capital, duplicate-letter, Cupertino).
+    private func renderedContextDecision(for word: CommittedWord, target: LanguageID) -> LayoutDecision? {
+        guard let renderedText = confidentRenderedText(for: word, in: target) else {
+            return nil
+        }
         if detector.dictionaries[target]?.contains(renderedText) == true {
             return .switchAndRetype(corrected: renderedText, target: target)
         }
