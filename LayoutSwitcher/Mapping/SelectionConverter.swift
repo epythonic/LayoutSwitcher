@@ -61,13 +61,49 @@ struct SelectionConverter {
     }
 
     func convertSelection() async -> Result {
-        if let accessibilityResult = tryAccessibility() {
-            return accessibilityResult
+        switch await applyToSelection({ textConverter.convert($0) }) {
+        case .transformed(let source, let result, let method):
+            let language = detectLanguage(source)
+            return .success(
+                conversion: .init(
+                    sourceText: source,
+                    convertedText: result,
+                    sourceLanguage: language,
+                    targetLanguage: target(for: language)
+                ),
+                method: method
+            )
+        case .skipped(let reason):
+            return .failure(reason)
         }
-        return await tryClipboard()
     }
 
-    private func tryAccessibility() -> Result? {
+    /// Cycles the selected text's letter casing (lower → UPPER → Title → lower).
+    /// Returns `true` when a replacement was applied.
+    @discardableResult
+    func cycleSelectionCase() async -> Bool {
+        if case .transformed = await applyToSelection({ SelectionCase.cycled($0) }) {
+            return true
+        }
+        return false
+    }
+
+    private enum SelectionOutcome {
+        case transformed(source: String, result: String, method: Result.Method)
+        case skipped(Result.Reason)
+    }
+
+    /// Reads the current selection (Accessibility first, clipboard fallback),
+    /// applies `transform`, and writes the result back. Shared by layout
+    /// conversion and case cycling so the read/replace machinery lives once.
+    private func applyToSelection(_ transform: (String) -> String?) async -> SelectionOutcome {
+        if let outcome = applyViaAccessibility(transform) {
+            return outcome
+        }
+        return await applyViaClipboard(transform)
+    }
+
+    private func applyViaAccessibility(_ transform: (String) -> String?) -> SelectionOutcome? {
         guard let element = focusedElementProvider() else { return nil }
         var selectedText: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(
@@ -80,11 +116,11 @@ struct SelectionConverter {
               !text.isEmpty else { return nil }
 
         guard text.count <= textConverter.maxSelectionLength else {
-            return .failure(.tooLong)
+            return .skipped(.tooLong)
         }
-
-        let converted = textConverter.convert(text)
-        guard converted != text else { return .failure(.conversionFailed) }
+        guard let converted = transform(text), converted != text else {
+            return .skipped(.conversionFailed)
+        }
 
         let axStatus = AXUIElementSetAttributeValue(
             element,
@@ -93,33 +129,24 @@ struct SelectionConverter {
         )
         guard axStatus == .success else { return nil }
 
-        return .success(
-            conversion: .init(
-                sourceText: text,
-                convertedText: converted,
-                sourceLanguage: detectLanguage(text),
-                targetLanguage: target(for: detectLanguage(text))
-            ),
-            method: .accessibility
-        )
+        return .transformed(source: text, result: converted, method: .accessibility)
     }
 
-    private func tryClipboard() async -> Result {
+    private func applyViaClipboard(_ transform: (String) -> String?) async -> SelectionOutcome {
         let originalClipboard = pasteboardRead()
 
         postKeyEvent(8, [.maskCommand]) // Cmd+C
         await sleep(50_000_000)
 
         guard let text = pasteboardRead(), !text.isEmpty else {
-            return .failure(.noSelection)
+            return .skipped(.noSelection)
         }
-
         guard text.count <= textConverter.maxSelectionLength else {
-            return .failure(.tooLong)
+            return .skipped(.tooLong)
         }
-
-        let converted = textConverter.convert(text)
-        guard converted != text else { return .failure(.conversionFailed) }
+        guard let converted = transform(text), converted != text else {
+            return .skipped(.conversionFailed)
+        }
 
         pasteboardWrite(converted)
         postKeyEvent(9, [.maskCommand]) // Cmd+V
@@ -129,15 +156,7 @@ struct SelectionConverter {
             pasteboardWrite(originalClipboard)
         }
 
-        return .success(
-            conversion: .init(
-                sourceText: text,
-                convertedText: converted,
-                sourceLanguage: detectLanguage(text),
-                targetLanguage: target(for: detectLanguage(text))
-            ),
-            method: .clipboard
-        )
+        return .transformed(source: text, result: converted, method: .clipboard)
     }
 
     private func detectLanguage(_ text: String) -> LanguageID {

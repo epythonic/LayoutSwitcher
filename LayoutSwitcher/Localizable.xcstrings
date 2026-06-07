@@ -3448,6 +3448,62 @@
         }
       }
     },
+    "settings.hotkeys.cycle-case.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cycle the selected text between lowercase, UPPERCASE and Title Case."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comută textul selectat între minuscule, MAJUSCULE și Inițiale Mari."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключает регистр выделения: строчные → ПРОПИСНЫЕ → Заглавные."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перемикає регістр виділення: малі → ВЕЛИКІ → Великі Перші."
+          }
+        }
+      }
+    },
+    "settings.hotkeys.cycle-case.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cycle selection case"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comută registrul selecției"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сменить регистр выделения"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Змінити регістр виділення"
+          }
+        }
+      }
+    },
     "settings.hotkeys.smart-paste.subtitle" : {
       "localizations" : {
         "en" : {

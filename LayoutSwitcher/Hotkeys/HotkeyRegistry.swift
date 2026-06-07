@@ -8,6 +8,7 @@ enum HotkeyAction: Hashable, Sendable {
     case convertLastSentence
     case undoLastAutoSwitch
     case convertSelection
+    case cycleSelectionCase
     case smartPaste
     case snooze
     case forceRetypeLastWord
@@ -18,6 +19,7 @@ enum HotkeyAction: Hashable, Sendable {
         .convertLastSentence,
         .undoLastAutoSwitch,
         .convertSelection,
+        .cycleSelectionCase,
         .smartPaste,
         .snooze,
         .forceRetypeLastWord
@@ -37,6 +39,8 @@ enum HotkeyAction: Hashable, Sendable {
             String(localized: "settings.hotkeys.undo-auto-switch.title")
         case .convertSelection:
             String(localized: "settings.hotkeys.convert-selection.title")
+        case .cycleSelectionCase:
+            String(localized: "settings.hotkeys.cycle-case.title")
         case .smartPaste:
             String(localized: "settings.hotkeys.smart-paste.title")
         case .snooze:
@@ -57,6 +61,8 @@ enum HotkeyAction: Hashable, Sendable {
             String(localized: "settings.hotkeys.undo-auto-switch.subtitle")
         case .convertSelection:
             String(localized: "settings.hotkeys.convert-selection.subtitle")
+        case .cycleSelectionCase:
+            String(localized: "settings.hotkeys.cycle-case.subtitle")
         case .smartPaste:
             String(localized: "settings.hotkeys.smart-paste.subtitle")
         case .snooze:
@@ -77,6 +83,8 @@ enum HotkeyAction: Hashable, Sendable {
             return "undoLastAutoSwitch"
         case .convertSelection:
             return "convertSelection"
+        case .cycleSelectionCase:
+            return "cycleSelectionCase"
         case .smartPaste:
             return "smartPaste"
         case .snooze:
@@ -93,6 +101,7 @@ enum HotkeyAction: Hashable, Sendable {
         case "convertLastSentence": self = .convertLastSentence
         case "undoLastAutoSwitch": self = .undoLastAutoSwitch
         case "convertSelection": self = .convertSelection
+        case "cycleSelectionCase": self = .cycleSelectionCase
         case "smartPaste": self = .smartPaste
         case "snooze": self = .snooze
         case "forceRetypeLastWord": self = .forceRetypeLastWord
@@ -155,6 +164,7 @@ extension HotkeyDefinition {
         case 8: return "C"
         case 9: return "V"
         case 15: return "R"
+        case 32: return "U"
         case 35: return "P"
         case 42: return "\\"
         case 36: return "↩"
@@ -210,6 +220,8 @@ final class HotkeyRegistry {
             HotkeyDefinition(keyCode: 6, modifiers: [.command, .option]): .undoLastAutoSwitch,
             // Control + Option + C — convert selected text.
             HotkeyDefinition(keyCode: 8, modifiers: [.control, .option]): .convertSelection,
+            // Control + Option + Command + U — cycle the selection's letter case.
+            HotkeyDefinition(keyCode: 32, modifiers: [.control, .option, .command]): .cycleSelectionCase,
             // Control + Option + Command + V — smart paste with layout alignment.
             HotkeyDefinition(keyCode: 9, modifiers: [.control, .option, .command]): .smartPaste,
             // Control + Option + Command + P — temporarily pause automatic switching.

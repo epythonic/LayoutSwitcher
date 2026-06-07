@@ -105,6 +105,8 @@ final class HotkeyCoordinator {
             Task { @MainActor [weak self] in await self?.undoLastSwitch() }
         case .convertSelection:
             Task { @MainActor [weak self] in await self?.convertSelection() }
+        case .cycleSelectionCase:
+            Task { @MainActor [weak self] in await self?.cycleSelectionCase() }
         case .snooze:
             toggleSnooze()
         case .forceRetypeLastWord:
@@ -237,6 +239,16 @@ final class HotkeyCoordinator {
             typingPipeline?.clearUndoNotification()
         }
         lastAutoSwitch = nil
+    }
+
+    /// Cycles the selected text's letter case via the isolated selection converter.
+    private func cycleSelectionCase() async {
+        guard let selectionConverter else {
+            Self.logger.error("cycleSelectionCase: converter is not configured")
+            return
+        }
+        let changed = await selectionConverter.cycleSelectionCase()
+        Self.logger.info("cycleSelectionCase changed=\(changed, privacy: .public)")
     }
 
     /// Converts current user-selected text through the isolated selection converter.
