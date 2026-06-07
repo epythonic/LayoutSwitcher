@@ -3448,6 +3448,62 @@
         }
       }
     },
+    "settings.autoreplace.add" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Adaugă" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Добавить" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Додати" } }
+      }
+    },
+    "settings.autoreplace.description" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Type a trigger as a whole word to expand it into its replacement. The expansion hotkey expands the current word on demand." } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Scrie un declanșator ca un cuvânt întreg pentru a-l extinde în înlocuirea sa. Tasta de extindere extinde cuvântul curent la cerere." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Печатайте триггер целым словом, чтобы он развернулся в замену. Хоткей разворачивает текущее слово вручную." } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Друкуйте тригер цілим словом, щоб він розгорнувся в заміну. Хоткей розгортає поточне слово вручну." } }
+      }
+    },
+    "settings.autoreplace.inline-enabled" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Expand automatically while typing" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Extinde automat în timpul tastării" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разворачивать автоматически при наборе" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Розгортати автоматично під час набору" } }
+      }
+    },
+    "settings.autoreplace.remove" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Elimină" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Удалить" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Вилучити" } }
+      }
+    },
+    "settings.autoreplace.replacement-placeholder" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Replacement" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Înlocuire" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Замена" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Заміна" } }
+      }
+    },
+    "settings.autoreplace.trigger-placeholder" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Trigger" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Declanșator" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Триггер" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Тригер" } }
+      }
+    },
+    "settings.tab.auto-replace" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Auto-replace" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Auto-înlocuire" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Авто-замены" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Авто-заміни" } }
+      }
+    },
     "settings.hotkeys.expand-auto-replace.subtitle" : {
       "localizations" : {
         "en" : {

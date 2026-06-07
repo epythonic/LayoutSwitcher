@@ -24,6 +24,8 @@ final class SettingsWindowController: NSObject {
     private let inputSources: InputSourceManager
     /// Hotkey binding registry.
     private let hotkeys: HotkeyRegistry
+    /// Text auto-replace rule store.
+    private let autoReplaceRules: AutoReplaceRules
     /// Per-application preferred layout model.
     private let perAppLayouts: PerAppLayoutPreferences
     /// Recent corrections history model.
@@ -46,6 +48,7 @@ final class SettingsWindowController: NSObject {
         userRomanian: UserDictionary,
         inputSources: InputSourceManager,
         hotkeys: HotkeyRegistry,
+        autoReplaceRules: AutoReplaceRules,
         perAppLayouts: PerAppLayoutPreferences,
         recents: RecentSwitches,
         learningCache: LearningCache,
@@ -61,6 +64,7 @@ final class SettingsWindowController: NSObject {
         self.userRomanian = userRomanian
         self.inputSources = inputSources
         self.hotkeys = hotkeys
+        self.autoReplaceRules = autoReplaceRules
         self.perAppLayouts = perAppLayouts
         self.recents = recents
         self.learningCache = learningCache
@@ -86,6 +90,7 @@ final class SettingsWindowController: NSObject {
             userRomanian: userRomanian,
             inputSources: inputSources,
             hotkeys: hotkeys,
+            autoReplaceRules: autoReplaceRules,
             perAppLayouts: perAppLayouts,
             recents: recents,
             learningCache: learningCache,

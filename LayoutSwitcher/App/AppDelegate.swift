@@ -175,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             userRomanian: userRomanian,
             inputSources: inputSources,
             hotkeys: hotkeyRegistry,
+            autoReplaceRules: autoReplaceRules,
             perAppLayouts: perAppLayouts,
             recents: recents,
             learningCache: learningCache,

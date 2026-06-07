@@ -22,6 +22,8 @@ struct SettingsView: View {
     @Bindable var inputSources: InputSourceManager
     /// Hotkey binding registry.
     @Bindable var hotkeys: HotkeyRegistry
+    /// Text auto-replace rule store.
+    @Bindable var autoReplaceRules: AutoReplaceRules
     /// Per-application preferred layout settings.
     @Bindable var perAppLayouts: PerAppLayoutPreferences
     /// Recent automatic/manual correction history.
@@ -70,6 +72,9 @@ struct SettingsView: View {
 
             ExclusionsTab(exclusions: exclusions)
                 .tabItem { Label(String(localized: "settings.tab.exclusions"), systemImage: "nosign") }
+
+            AutoReplaceTab(rules: autoReplaceRules)
+                .tabItem { Label(String(localized: "settings.tab.auto-replace"), systemImage: "text.badge.plus") }
 
             DictionariesTab(english: userEnglish, russian: userRussian, ukrainian: userUkrainian, romanian: userRomanian)
                 .tabItem { Label(String(localized: "settings.tab.dictionaries"), systemImage: "character.book.closed") }
