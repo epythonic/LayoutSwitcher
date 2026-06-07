@@ -233,12 +233,23 @@ final class TypingPipeline {
                 return
             }
         }
-        // Rendered-Russian ё restoration: when the active word, reinterpreted in
-        // Russian, is a confident Russian word that needs ё, but the visible text
-        // itself was not correctable (so the block above was skipped). Scoped to
-        // Russian because ё is the only alphabet-internal restoration of this kind.
-        if let renderedRussian = confidentRenderedText(for: word, in: .ru),
-           applyRenderedRussianYoCorrection(text: renderedRussian, word: word) {
+        // Alphabet-internal restoration from a cross-layout render. When the
+        // visible text was not itself correctable (Phase A skipped or bailed), the
+        // active word reinterpreted in another enabled layout may be a confident
+        // word that only needs an in-alphabet restoration — Russian ё or Romanian
+        // diacritics. English/Ukrainian have no such restoration, so they no-op.
+        //
+        // In practice Russian is the live trigger: its letters sit on English
+        // punctuation keys, so the active render isn't all letters and Phase A's
+        // visible-language detection bails to here. Romanian diacritics are
+        // normally resolved earlier by Phase A's cross-layout strategy; this loop
+        // keeps the fallback uniform rather than hard-coding a single language.
+        for renderedLanguage in sameLanguageCorrectionCandidates(activeLanguage: activeLanguage) {
+            guard let renderedText = confidentRenderedText(for: word, in: renderedLanguage),
+                  let restoration = renderedInternalRestorationDecision(text: renderedText, language: renderedLanguage),
+                  applyRetypeDecision(restoration, word: word, activeLanguage: renderedLanguage, originalText: renderedText) else {
+                continue
+            }
             return
         }
 
@@ -619,19 +630,34 @@ final class TypingPipeline {
         )
     }
 
-    private func applyRenderedRussianYoCorrection(text: String, word: CommittedWord) -> Bool {
-        let decision = detector.decideVisibleTextCorrection(
-            text: text,
-            language: .ru,
-            autoAddRussianYo: appState?.autoAddRussianYo == true,
-            thresholds: currentDetectionThresholds
-        )
-        return applyRetypeDecision(
-            decision,
-            word: word,
-            activeLanguage: .ru,
-            originalText: text
-        )
+    /// Same-language *internal* restoration of a cross-layout render: Russian ё or
+    /// Romanian diacritics, each gated by its feature flag. Returns nil when the
+    /// language has no such restoration or none applies. Other same-language
+    /// corrections (double-capital, duplicate-letter, Cupertino) are intentionally
+    /// excluded — this fallback only restores in-alphabet glyphs.
+    private func renderedInternalRestorationDecision(text: String, language: LanguageID) -> LayoutDecision? {
+        let decision: LayoutDecision
+        switch language {
+        case .ru:
+            guard appState?.autoAddRussianYo == true else { return nil }
+            decision = detector.decideVisibleTextCorrection(
+                text: text,
+                language: .ru,
+                autoAddRussianYo: true,
+                thresholds: currentDetectionThresholds
+            )
+        case .ro:
+            guard appState?.autoAddRomanianDiacritics == true else { return nil }
+            decision = detector.decideVisibleTextCorrection(
+                text: text,
+                language: .ro,
+                autoAddRomanianDiacritics: true,
+                thresholds: currentDetectionThresholds
+            )
+        case .en, .uk:
+            return nil
+        }
+        return decision.retypePayload == nil ? nil : decision
     }
 
     @discardableResult
