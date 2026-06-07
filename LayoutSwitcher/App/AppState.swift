@@ -38,6 +38,7 @@ final class AppState {
     private static let correctSingleCharacterWordsKey = "settings.correctSingleCharacterWords"
     private static let autoExtendRecentAmbiguousKey = "settings.autoExtendRecentAmbiguous"
     private static let detectionSensitivityKey = "settings.detectionSensitivity"
+    private static let detectionSensitivityByPairKey = "settings.detectionSensitivityByPair"
     private static let soundFeedbackEnabledKey = "settings.soundFeedbackEnabled"
     private static let soundFeedbackKindKey = "settings.soundFeedbackKind"
     private static let visualFeedbackEnabledKey = "settings.visualFeedbackEnabled"
@@ -92,11 +93,29 @@ final class AppState {
             defaults.set(autoExtendRecentAmbiguous, forKey: Self.autoExtendRecentAmbiguousKey)
         }
     }
-    /// User-selected sensitivity profile for layout detection thresholds.
+    /// Fallback sensitivity for pairs without an explicit override (seeded from the
+    /// legacy global setting so existing installs keep their value).
+    private let defaultDetectionSensitivity: DetectionSensitivity
+    /// Per-language-pair sensitivity overrides.
+    private var detectionSensitivityByPair: [LanguagePair: DetectionSensitivity] {
+        didSet { persistDetectionSensitivityByPair() }
+    }
+
+    /// Sensitivity profile for the currently active language pair. Reading and
+    /// writing this targets the active pair, so each pair keeps its own profile.
     var detectionSensitivity: DetectionSensitivity {
-        didSet {
-            defaults.set(detectionSensitivity.rawValue, forKey: Self.detectionSensitivityKey)
-        }
+        get { detectionSensitivity(for: activeLanguagePair) }
+        set { setDetectionSensitivity(newValue, for: activeLanguagePair) }
+    }
+
+    /// Sensitivity profile configured for a specific language pair.
+    func detectionSensitivity(for pair: LanguagePair) -> DetectionSensitivity {
+        detectionSensitivityByPair[pair] ?? defaultDetectionSensitivity
+    }
+
+    /// Sets the sensitivity profile for a specific language pair.
+    func setDetectionSensitivity(_ sensitivity: DetectionSensitivity, for pair: LanguagePair) {
+        detectionSensitivityByPair[pair] = sensitivity
     }
     /// Controls whether successful corrections play audible feedback.
     var soundFeedbackEnabled: Bool {
@@ -160,8 +179,9 @@ final class AppState {
         self.correctCommonTypos = defaults.bool(forKey: Self.correctCommonTyposKey)
         self.correctSingleCharacterWords = defaults.bool(forKey: Self.correctSingleCharacterWordsKey)
         self.autoExtendRecentAmbiguous = defaults.bool(forKey: Self.autoExtendRecentAmbiguousKey)
-        let sensitivityRaw = defaults.string(forKey: Self.detectionSensitivityKey)
-        self.detectionSensitivity = sensitivityRaw.flatMap(DetectionSensitivity.init(rawValue:)) ?? .balanced
+        let legacySensitivityRaw = defaults.string(forKey: Self.detectionSensitivityKey)
+        self.defaultDetectionSensitivity = legacySensitivityRaw.flatMap(DetectionSensitivity.init(rawValue:)) ?? .balanced
+        self.detectionSensitivityByPair = Self.loadDetectionSensitivityByPair(from: defaults)
         self.soundFeedbackEnabled = defaults.object(forKey: Self.soundFeedbackEnabledKey) as? Bool ?? true
         let soundKindRaw = defaults.string(forKey: Self.soundFeedbackKindKey)
         self.soundFeedbackKind = soundKindRaw.flatMap(SoundFeedbackKind.init(rawValue:)) ?? .tink
@@ -251,5 +271,24 @@ final class AppState {
 
     private static func loadActiveLanguagePair(from defaults: UserDefaults) -> LanguagePair {
         defaults.string(forKey: Self.activeLanguagePairKey).flatMap(LanguagePair.init(rawValue:)) ?? .ruEn
+    }
+
+    private func persistDetectionSensitivityByPair() {
+        let raw = detectionSensitivityByPair.reduce(into: [String: String]()) { result, entry in
+            result[entry.key.rawValue] = entry.value.rawValue
+        }
+        defaults.set(raw, forKey: Self.detectionSensitivityByPairKey)
+    }
+
+    private static func loadDetectionSensitivityByPair(from defaults: UserDefaults) -> [LanguagePair: DetectionSensitivity] {
+        guard let raw = defaults.dictionary(forKey: Self.detectionSensitivityByPairKey) as? [String: String] else {
+            return [:]
+        }
+        return raw.reduce(into: [LanguagePair: DetectionSensitivity]()) { result, entry in
+            if let pair = LanguagePair(rawValue: entry.key),
+               let sensitivity = DetectionSensitivity(rawValue: entry.value) {
+                result[pair] = sensitivity
+            }
+        }
     }
 }

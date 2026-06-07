@@ -129,7 +129,10 @@ private struct GeneralTab: View {
                     .accessibilityIdentifier("settings.toggle.correct-single-char")
                 Toggle(String(localized: "settings.toggle.auto-extend-recent"), isOn: $appState.autoExtendRecentAmbiguous)
                     .accessibilityIdentifier("settings.toggle.auto-extend-recent")
-                Picker(String(localized: "settings.picker.aggressiveness"), selection: $appState.detectionSensitivity) {
+                Picker(
+                    String(localized: "settings.picker.aggressiveness") + " — " + appState.activeLanguagePair.localizedTitle,
+                    selection: $appState.detectionSensitivity
+                ) {
                     ForEach(DetectionSensitivity.allCases, id: \.self) { sensitivity in
                         Text(sensitivity.localizedTitle).tag(sensitivity)
                     }

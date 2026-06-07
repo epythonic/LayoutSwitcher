@@ -35,6 +35,27 @@ struct AppStateTests {
 
     }
 
+    @Test func detectionSensitivityIsStoredPerLanguagePair() throws {
+        let defaults = try Self.makeDefaults()
+        let state = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+
+        state.setActiveLanguagePair(.ruEn)
+        state.detectionSensitivity = .aggressive
+
+        state.setActiveLanguagePair(.roEn)
+        #expect(state.detectionSensitivity == .balanced) // independent default
+        state.detectionSensitivity = .conservative
+
+        state.setActiveLanguagePair(.ruEn)
+        #expect(state.detectionSensitivity == .aggressive) // ruEn override retained
+        #expect(state.detectionSensitivity(for: .roEn) == .conservative)
+
+        // Per-pair overrides persist across instances.
+        let reloaded = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
+        #expect(reloaded.detectionSensitivity(for: .ruEn) == .aggressive)
+        #expect(reloaded.detectionSensitivity(for: .roEn) == .conservative)
+    }
+
     @Test func duplicateLetterCorrectionSettingPersistsAcrossInstances() throws {
         let defaults = try Self.makeDefaults()
         let first = AppState(defaults: defaults, now: { Date(timeIntervalSince1970: 0) })
