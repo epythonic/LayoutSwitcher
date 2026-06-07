@@ -3448,6 +3448,62 @@
         }
       }
     },
+    "settings.hotkeys.expand-auto-replace.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand the current word using your auto-replace rules."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Extinde cuvântul curent folosind regulile de auto-înlocuire."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Развернуть текущее слово по правилам авто-замены."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Розгорнути поточне слово за правилами авто-заміни."
+          }
+        }
+      }
+    },
+    "settings.hotkeys.expand-auto-replace.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand auto-replace"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Extinde auto-înlocuirea"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Развернуть авто-замену"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Розгорнути авто-заміну"
+          }
+        }
+      }
+    },
     "settings.hotkeys.cycle-case.subtitle" : {
       "localizations" : {
         "en" : {

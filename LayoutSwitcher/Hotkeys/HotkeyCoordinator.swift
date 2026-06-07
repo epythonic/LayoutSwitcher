@@ -119,6 +119,8 @@ final class HotkeyCoordinator {
             typingPipeline?.forceConvertLastSentence()
         case .smartPaste:
             Task { @MainActor [weak self] in await self?.runSmartPaste() }
+        case .expandAutoReplace:
+            typingPipeline?.expandCurrentWordViaHotkey()
         }
     }
 

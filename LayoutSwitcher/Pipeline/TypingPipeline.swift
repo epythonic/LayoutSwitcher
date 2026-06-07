@@ -846,6 +846,19 @@ final class TypingPipeline {
         }
     }
 
+    /// Expands the current in-progress word via auto-replace on demand (hotkey),
+    /// using the live buffer with no separator — independent of inline expansion.
+    func expandCurrentWordViaHotkey() {
+        guard let autoReplaceRules else { return }
+        let characters = buffer.characters
+        guard !characters.isEmpty else { return }
+        let text = characters.map(\.unicode).joined()
+        guard let replacement = autoReplaceRules.replacement(for: text) else { return }
+        retyper.expand(original: characters, replacement: replacement)
+        buffer.reset(reason: .manual)
+        Self.logger.info("auto-replace (hotkey): \"\(text, privacy: .public)\" → \"\(replacement, privacy: .public)\"")
+    }
+
     /// Re-runs layout detection on the last committed word and retypes it if a different
     /// layout is detected. Delegated to `ManualActionsCoordinator`.
     func forceRetypeLastWord() {

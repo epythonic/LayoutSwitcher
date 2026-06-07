@@ -12,6 +12,7 @@ enum HotkeyAction: Hashable, Sendable {
     case smartPaste
     case snooze
     case forceRetypeLastWord
+    case expandAutoReplace
 
     /// Ordered list used by settings and onboarding renderers.
     static let ordered: [HotkeyAction] = [
@@ -22,7 +23,8 @@ enum HotkeyAction: Hashable, Sendable {
         .cycleSelectionCase,
         .smartPaste,
         .snooze,
-        .forceRetypeLastWord
+        .forceRetypeLastWord,
+        .expandAutoReplace
     ]
 
     /// Alias used by persistence code when all actions must be represented.
@@ -47,6 +49,8 @@ enum HotkeyAction: Hashable, Sendable {
             String(localized: "settings.hotkeys.snooze.title")
         case .forceRetypeLastWord:
             String(localized: "settings.hotkeys.force-retype-last-word.title")
+        case .expandAutoReplace:
+            String(localized: "settings.hotkeys.expand-auto-replace.title")
         }
     }
 
@@ -69,6 +73,8 @@ enum HotkeyAction: Hashable, Sendable {
             String(localized: "settings.hotkeys.snooze.subtitle")
         case .forceRetypeLastWord:
             String(localized: "settings.hotkeys.force-retype-last-word.subtitle")
+        case .expandAutoReplace:
+            String(localized: "settings.hotkeys.expand-auto-replace.subtitle")
         }
     }
 
@@ -91,6 +97,8 @@ enum HotkeyAction: Hashable, Sendable {
             return "snooze"
         case .forceRetypeLastWord:
             return "forceRetypeLastWord"
+        case .expandAutoReplace:
+            return "expandAutoReplace"
         }
     }
 
@@ -105,6 +113,7 @@ enum HotkeyAction: Hashable, Sendable {
         case "smartPaste": self = .smartPaste
         case "snooze": self = .snooze
         case "forceRetypeLastWord": self = .forceRetypeLastWord
+        case "expandAutoReplace": self = .expandAutoReplace
         default:
             return nil
         }
@@ -163,6 +172,7 @@ extension HotkeyDefinition {
         case 6: return "Z"
         case 8: return "C"
         case 9: return "V"
+        case 14: return "E"
         case 15: return "R"
         case 32: return "U"
         case 35: return "P"
@@ -227,7 +237,9 @@ final class HotkeyRegistry {
             // Control + Option + Command + P — temporarily pause automatic switching.
             HotkeyDefinition(keyCode: 35, modifiers: [.control, .option, .command]): .snooze,
             // Control + Option + Command + R — force-retype last committed word.
-            HotkeyDefinition(keyCode: 15, modifiers: [.control, .option, .command]): .forceRetypeLastWord
+            HotkeyDefinition(keyCode: 15, modifiers: [.control, .option, .command]): .forceRetypeLastWord,
+            // Control + Option + Command + E — expand the current word via auto-replace.
+            HotkeyDefinition(keyCode: 14, modifiers: [.control, .option, .command]): .expandAutoReplace
         ]
 
     /// Loads bindings from persistence and falls back to defaults.

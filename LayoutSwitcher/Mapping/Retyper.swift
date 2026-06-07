@@ -352,18 +352,22 @@ struct Retyper {
     func expand(
         original: [WordChar],
         replacement: String,
-        separator: WordSeparator,
+        separator: WordSeparator? = nil,
         separatorFlags: CGEventFlags = []
     ) {
         guard !original.isEmpty, !replacement.isEmpty else { return }
         capsLockGuard.captureAndDisable()
         defer { capsLockGuard.restore() }
 
-        for _ in 0..<(original.count + 1) {
-            postKeyEvent(51, []) // backspace (trigger chars + separator)
+        // Inline expansion fires on the separator (erase it too); the on-demand
+        // hotkey acts on the live buffer with no separator typed yet.
+        let eraseCount = original.count + (separator == nil ? 0 : 1)
+        for _ in 0..<eraseCount {
+            postKeyEvent(51, []) // backspace
         }
         postUnicodeEvent(replacement)
 
+        guard let separator else { return }
         let shift: CGEventFlags = separatorFlags.contains(.maskShift) ? [.maskShift] : []
         switch separator {
         case .space: postKeyEvent(49, shift)

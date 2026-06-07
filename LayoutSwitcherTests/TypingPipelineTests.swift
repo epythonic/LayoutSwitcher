@@ -1477,6 +1477,24 @@ struct TypingPipelineTests {
         #expect(fixture.output.postedUnicode.contains("be right back"))
     }
 
+    @Test func hotkeyAutoReplaceExpandsLiveBufferWord() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "TypingPipelineTests.autoReplaceHotkey"))
+        defaults.removePersistentDomain(forName: "TypingPipelineTests.autoReplaceHotkey")
+        let rules = AutoReplaceRules(defaults: defaults)
+        rules.upsert(trigger: "omw", replacement: "on my way")
+
+        let fixture = try Self.makeFixture(retypeSucceeds: true, autoReplaceRules: rules)
+        // Type the trigger with no separator (live buffer), then fire the hotkey.
+        for event in [Self.key(31, "o"), Self.key(46, "m"), Self.key(13, "w")] {
+            fixture.pipeline.handle(event)
+        }
+        fixture.pipeline.expandCurrentWordViaHotkey()
+
+        // 3 chars erased (no separator); replacement typed as Unicode.
+        #expect(Array(fixture.output.postedKeys.prefix(3)) == [51, 51, 51])
+        #expect(fixture.output.postedUnicode == ["on my way"])
+    }
+
     @Test func mouseClickMidWordResetsBufferWithoutStaleFragment() async throws {
         let fixture = try Self.makeFixture(retypeSucceeds: true)
 
