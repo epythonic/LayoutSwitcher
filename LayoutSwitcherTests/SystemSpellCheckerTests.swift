@@ -34,6 +34,28 @@ struct SystemSpellCheckerTests {
         }
     }
 
+    private struct FakeSuggestionProvider: SpellingSuggestionProviding {
+        let suggestions: [String]
+
+        func suggestions(for word: String, language: LanguageID) -> [String] {
+            suggestions
+        }
+    }
+
+    private final class CountingSuggestionProvider: SpellingSuggestionProviding {
+        private(set) var callCount = 0
+        let result: [String]
+
+        init(result: [String]) {
+            self.result = result
+        }
+
+        func suggestions(for word: String, language: LanguageID) -> [String] {
+            callCount += 1
+            return result
+        }
+    }
+
     @Test func containsKnownWord() {
         let checker = FakeChecker()
         checker.knownWords.insert("hello")
@@ -74,5 +96,43 @@ struct SystemSpellCheckerTests {
         #expect(en.isoLanguage == "en")
         #expect(ru.isoLanguage == "ru")
         #expect(ro.isoLanguage == "ro")
+    }
+
+    @Test func curatedProviderPrependsRussianCorrectionsAndDeduplicatesDownstream() {
+        let provider = CuratedSpellingSuggestionProvider(
+            downstream: FakeSuggestionProvider(suggestions: ["Заключил", "Залучил"]),
+            curated: [.ru: ["закулчил": ["заключил"]]]
+        )
+
+        #expect(provider.suggestions(for: "Закулчил", language: .ru) == ["заключил", "Залучил"])
+    }
+
+    @Test func curatedCorrectionsParserReadsLanguageKeyedEntries() {
+        let table = CuratedCorrections.parse(
+            "# comment\nru заклучил заключил\nru закулчил заключил\n"
+        )
+
+        #expect(table?[.ru]?["заклучил"] == ["заключил"])
+        #expect(table?[.ru]?["закулчил"] == ["заключил"])
+    }
+
+    @Test func curatedCorrectionsParserIgnoresCommentsAndBlankLines() {
+        #expect(CuratedCorrections.parse("# only a comment\n\n  \n") == nil)
+    }
+
+    @Test func curatedCorrectionsEmbeddedFallbackCoversKnownTypos() {
+        #expect(CuratedCorrections.embedded[.ru]?["заклучил"] == ["заключил"])
+    }
+
+    @Test func cachedProviderMemoizesGuessesPerWordAndLanguage() {
+        let downstream = CountingSuggestionProvider(result: ["book"])
+        let provider = CachedSpellingSuggestionProvider(downstream: downstream, capacity: 100)
+
+        #expect(provider.suggestions(for: "bokk", language: .en) == ["book"])
+        #expect(provider.suggestions(for: "bokk", language: .en) == ["book"])
+        #expect(downstream.callCount == 1) // second identical query served from cache
+
+        _ = provider.suggestions(for: "bokk", language: .ru)
+        #expect(downstream.callCount == 2) // different language is a distinct key
     }
 }

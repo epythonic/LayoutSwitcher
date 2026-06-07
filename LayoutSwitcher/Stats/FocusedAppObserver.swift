@@ -62,7 +62,7 @@ typealias WorkspaceActivationObserver = @MainActor (@escaping WorkspaceActivatio
 /// Observes frontmost app transitions and secure-input context for pipeline gating.
 @MainActor
 final class FocusedAppObserver: FocusedAppObserving {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "FocusedApp")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "FocusedApp")
 
     private(set) var bundleID: String?
     private(set) var localizedName: String?

@@ -42,7 +42,7 @@ struct RecentSwitchEntry: Identifiable, Codable, Sendable {
 @MainActor
 @Observable
 final class RecentSwitches {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "RecentSwitches")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "RecentSwitches")
     private static let defaultsKey = "recentSwitches.entries"
     private static let legacyDefaultsKey = "recentSwitches"
 

@@ -8,7 +8,7 @@ import os
 /// keystrokes are not silently uppercased by an active Caps Lock.
 @MainActor
 final class CapsLockGuard {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "CapsLock")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "CapsLock")
 
     typealias ReadCapsLockState = @MainActor () -> Bool
     typealias SetCapsLockState = @MainActor (Bool) -> Bool

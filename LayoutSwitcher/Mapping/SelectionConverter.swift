@@ -6,7 +6,7 @@ import os
 /// Performs manual "convert selected text" through Accessibility first, then clipboard.
 @MainActor
 struct SelectionConverter {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "SelectionConverter")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "SelectionConverter")
 
     private let textConverter: SelectionTextConverter
     private let focused: FocusedAppObserving

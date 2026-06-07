@@ -11,7 +11,7 @@ import ServiceManagement
 @MainActor
 struct LaunchAtLoginManager {
     /// ServiceManagement diagnostics logger.
-    static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "LaunchAtLogin")
+    static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "LaunchAtLogin")
 
     /// Reads the current ServiceManagement registration status.
     private let statusProvider: @MainActor () -> SMAppService.Status

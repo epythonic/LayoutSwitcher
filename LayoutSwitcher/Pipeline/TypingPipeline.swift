@@ -9,7 +9,7 @@ import os
 /// notifications, and feedback.
 @MainActor
 final class TypingPipeline {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Pipeline")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Pipeline")
     let tunables: PipelineTunables
 
     private let buffer: WordBuffer
@@ -282,10 +282,13 @@ final class TypingPipeline {
 
     private func visibleCorrectionLanguage(for text: String, fallback: LanguageID) -> LanguageID? {
         guard !text.isEmpty, text.allSatisfy(\.isLetter) else { return nil }
-        if detector.wordMatchesAlphabet(text, of: fallback) {
+        if isCorrectionLanguageEnabled(fallback),
+           detector.wordMatchesAlphabet(text, of: fallback) {
             return fallback
         }
-        let matches = LanguageID.allCases.filter { detector.wordMatchesAlphabet(text, of: $0) }
+        let matches = LanguageID.allCases.filter {
+            isCorrectionLanguageEnabled($0) && detector.wordMatchesAlphabet(text, of: $0)
+        }
         if matches.contains(.ru) { return .ru }
         if matches.contains(.ro),
            let romanianPayload = visibleTextCorrectionDecision(text: text, language: .ro).retypePayload,
@@ -327,6 +330,20 @@ final class TypingPipeline {
         }
         var activeRenderedDictionaryDecision: LayoutDecision?
         let visibleDecision = visibleTextCorrectionDecision(text: word.text, language: visibleLanguage)
+        if let contextualDecision = pendingSequenceContextDecision(
+            word: word,
+            activeLanguage: activeLanguage,
+            visibleLanguage: visibleLanguage
+        ) {
+            return contextualDecision
+        }
+        if let contextualDecision = recentAutoSwitchContextDecision(
+            word: word,
+            activeLanguage: activeLanguage,
+            visibleLanguage: visibleLanguage
+        ) {
+            return contextualDecision
+        }
         if shouldVisibleLatinOutrankRenderedCorrection(word.text, activeLanguage: activeLanguage, visibleLanguage: visibleLanguage) {
             if let visiblePayload = visibleDecision.retypePayload,
                visiblePayload.target == visibleLanguage,
@@ -378,12 +395,119 @@ final class TypingPipeline {
         return activeRenderedDictionaryDecision ?? layoutSwitchDecision
     }
 
+    private func pendingSequenceContextDecision(
+        word: CommittedWord,
+        activeLanguage: LanguageID,
+        visibleLanguage: LanguageID
+    ) -> LayoutDecision? {
+        guard let pendingTarget = sequenceDetector.candidates.last?.targetLanguage,
+              pendingTarget != visibleLanguage,
+              isRetypeTargetAllowed(pendingTarget, from: activeLanguage),
+              isCorrectionLanguageEnabled(pendingTarget) else {
+            return nil
+        }
+        let renderedText = detector.mapping.render(word.characters, in: pendingTarget)
+        guard renderedText != word.text,
+              visibleCorrectionLanguage(for: renderedText, fallback: pendingTarget) == pendingTarget else {
+            return nil
+        }
+        // Prefer the literal render over any cupertino "improvement": NSSpellChecker
+        // can propose a typographically-close word ("мур" for "мир") with a higher
+        // scoreGain, but if the rendered text already matches the dictionary then
+        // that's exactly what the user typed and there is no typo to fix.
+        if detector.dictionaries[pendingTarget]?.contains(renderedText) == true {
+            return .switchAndRetype(corrected: renderedText, target: pendingTarget)
+        }
+        let renderedDecision = visibleTextCorrectionDecision(text: renderedText, language: pendingTarget)
+        if let payload = renderedDecision.retypePayload,
+           payload.target == pendingTarget {
+            return renderedDecision
+        }
+        return nil
+    }
+
+    private func recentAutoSwitchContextDecision(
+        word: CommittedWord,
+        activeLanguage: LanguageID,
+        visibleLanguage: LanguageID
+    ) -> LayoutDecision? {
+        guard let target = recentAutoSwitchContextTarget(for: word),
+              target != visibleLanguage,
+              isRetypeTargetAllowed(target, from: activeLanguage),
+              isCorrectionLanguageEnabled(target) else {
+            return nil
+        }
+        return renderedContextDecision(for: word, target: target)
+    }
+
+    private func recentAutoSwitchContextTarget(for word: CommittedWord) -> LanguageID? {
+        guard let recent = recents.entries.first,
+              recent.kind == .auto,
+              let previous = committedHistory.dropLast().last,
+              previous.separator == .space,
+              previous.bundleID == word.bundleID,
+              recent.bundleID == word.bundleID,
+              now().timeIntervalSince(recent.timestamp) <= tunables.autoExtendWindow,
+              recentMatchesPreviousWord(recent, previous: previous) else {
+            return nil
+        }
+        let correctedTail = recent.corrected
+            .split(whereSeparator: { $0.isWhitespace })
+            .last
+            .map(String.init) ?? recent.corrected
+        return preferredCorrectionLanguage(for: correctedTail)
+    }
+
+    private func recentMatchesPreviousWord(_ recent: RecentSwitchEntry, previous: CommittedWord) -> Bool {
+        if recent.original == previous.text { return true }
+        return recent.original
+            .split(whereSeparator: { $0.isWhitespace })
+            .last
+            .map(String.init) == previous.text
+    }
+
+    private func preferredCorrectionLanguage(for text: String) -> LanguageID? {
+        let matches = LanguageID.allCases.filter {
+            isCorrectionLanguageEnabled($0) && detector.wordMatchesAlphabet(text, of: $0)
+        }
+        if matches.contains(.ru) { return .ru }
+        if matches.contains(.ro) { return .ro }
+        if matches.contains(.en) { return .en }
+        if matches.contains(.uk) { return .uk }
+        return nil
+    }
+
+    private func renderedContextDecision(for word: CommittedWord, target: LanguageID) -> LayoutDecision? {
+        let renderedText = detector.mapping.render(word.characters, in: target)
+        guard renderedText != word.text,
+              visibleCorrectionLanguage(for: renderedText, fallback: target) == target else {
+            return nil
+        }
+        // Prefer the literal render when it's already a valid word — see
+        // `pendingSequenceContextDecision` for the same rationale.
+        if detector.dictionaries[target]?.contains(renderedText) == true {
+            return .switchAndRetype(corrected: renderedText, target: target)
+        }
+        let renderedDecision = visibleTextCorrectionDecision(text: renderedText, language: target)
+        if let payload = renderedDecision.retypePayload,
+           payload.target == target {
+            return renderedDecision
+        }
+        return nil
+    }
+
     private func isRetypeTargetAllowed(_ target: LanguageID, from activeLanguage: LanguageID) -> Bool {
         if target == activeLanguage { return true }
         guard let allowedTargets = allowedCrossLayoutTargets(from: activeLanguage) else {
             return true
         }
         return allowedTargets.contains(target)
+    }
+
+    private func isCorrectionLanguageEnabled(_ language: LanguageID) -> Bool {
+        guard let activePair = appState?.activeLanguagePair else { return true }
+        let languages = activePair.languages
+        return language == languages.primary || language == languages.alternate
     }
 
     private func preferredDecisionSourceLanguage(
@@ -467,6 +591,11 @@ final class TypingPipeline {
         let corrected = payload.corrected
         let target = payload.target
         let correctionKind = payload.kind
+        guard isCorrectionLanguageEnabled(target) else {
+            resetPendingSequence(clearCooldown: true)
+            Self.logger.info("decision: switch suppressed (language outside active pair: \(target.rawValue, privacy: .public))")
+            return true
+        }
         if activeLanguage != target,
            appState?.isLanguageDirectionEnabled(source: activeLanguage, target: target) == false {
             resetPendingSequence(clearCooldown: true)

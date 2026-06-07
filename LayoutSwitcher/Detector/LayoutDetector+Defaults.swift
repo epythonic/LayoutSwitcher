@@ -42,7 +42,11 @@ extension LayoutDetector {
                 words: Self.rawWords(for: .ru),
                 preferredPlainCorrections: RussianYoResolver.defaultPreferredPlainCorrections
             ),
-            spellingSuggestionProvider: SystemSpellingSuggestionProvider(checker: systemSpellChecker),
+            spellingSuggestionProvider: CuratedSpellingSuggestionProvider(
+                downstream: CachedSpellingSuggestionProvider(
+                    downstream: SystemSpellingSuggestionProvider(checker: systemSpellChecker)
+                )
+            ),
             thresholds: thresholds
         )
     }
@@ -97,7 +101,11 @@ extension LayoutDetector {
             romanianDiacriticResolverProvider: {
                 romanianDiacriticResolverCache.resolver(userWords: userRomanian.words)
             },
-            spellingSuggestionProvider: SystemSpellingSuggestionProvider(checker: systemSpellChecker),
+            spellingSuggestionProvider: CuratedSpellingSuggestionProvider(
+                downstream: CachedSpellingSuggestionProvider(
+                    downstream: SystemSpellingSuggestionProvider(checker: systemSpellChecker)
+                )
+            ),
             romanianPlainOverrideProvider: {
                 romanianDiacriticResolverCache.plainOverrides(userWords: userRomanian.words)
             },

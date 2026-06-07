@@ -3,7 +3,7 @@ import os
 
 /// Loads plain-text dictionary corpora bundled with the app.
 enum BundledDictionaryLoader {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Dictionary")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Dictionary")
     private static let cachedFallbacks: [LanguageID: InMemoryDictionary] = [
         .en: Self.load(language: .en, resourceName: LanguageID.en.rawValue) ?? EmbeddedDictionaries.english(),
         .ru: Self.load(language: .ru, resourceName: LanguageID.ru.rawValue) ?? EmbeddedDictionaries.russian(),

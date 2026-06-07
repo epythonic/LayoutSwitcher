@@ -79,7 +79,7 @@ enum RetypeResult: Equatable, Sendable {
 /// selection, timing, and event posting deterministically.
 @MainActor
 struct Retyper {
-    static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Retyper")
+    static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Retyper")
 
     private let mapping: any KeyboardMapping
     private let enabledLayoutsProvider: @MainActor () -> [RetypeInputSource]
@@ -365,19 +365,24 @@ struct Retyper {
         return EncodedKey(keyCode: fallback.keyCode, flags: flags)
     }
 
-    private func waitForLayout(_ id: String, timeoutNanoseconds: UInt64 = 200_000_000) async -> Bool {
+    private func waitForLayout(_ id: String, timeoutNanoseconds: UInt64 = 400_000_000) async -> Bool {
         let step: UInt64 = 10_000_000
         var elapsed: UInt64 = 0
         while elapsed <= timeoutNanoseconds {
             refreshCurrentLayout()
             if currentLayoutIDProvider() == id {
+                if elapsed > 0 {
+                    Self.logger.debug("layout \(id, privacy: .public) confirmed after \(elapsed / 1_000_000, privacy: .public)ms")
+                }
                 return true
             }
             await sleep(step)
             elapsed += step
         }
         refreshCurrentLayout()
-        return currentLayoutIDProvider() == id
+        let confirmed = currentLayoutIDProvider() == id
+        Self.logger.notice("layout \(id, privacy: .public) confirm \(confirmed ? "succeeded late" : "timed out", privacy: .public) after \(elapsed / 1_000_000, privacy: .public)ms (timeout \(timeoutNanoseconds / 1_000_000, privacy: .public)ms)")
+        return confirmed
     }
 
     static func postKey(keyCode: CGKeyCode, flags: CGEventFlags = []) {

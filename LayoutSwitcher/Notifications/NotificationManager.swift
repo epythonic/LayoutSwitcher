@@ -13,7 +13,7 @@ final class NotificationManager: NSObject {
     typealias RemoveDeliveredNotifications = @MainActor ([String]) -> Void
     typealias MakeNotificationID = @MainActor () -> String
 
-    nonisolated static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Notifications")
+    nonisolated static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Notifications")
 
     /// Identifier for the auto-switch notification category.
     static let autoSwitchCategory = "autoSwitch"

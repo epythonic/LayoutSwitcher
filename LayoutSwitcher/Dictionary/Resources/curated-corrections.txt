@@ -1,0 +1,12 @@
+# Curated spelling corrections applied before NSSpellChecker guesses.
+#
+# These are a deliberate fallback for words the system spell checker does not
+# itself suggest (e.g. transposition typos the Russian dictionary misses).
+# CuratedSpellingSuggestionProvider merges them ahead of, then de-duplicates
+# them against, the system guesses. Keep this list minimal and justified —
+# prefer fixing the general corrector over growing it. See docs/FullAudit.
+#
+# Format: <lang> <wrong> <correct> [<correct2> ...]
+# Lines starting with "#" and blank lines are ignored.
+ru заклучил заключил
+ru закулчил заключил

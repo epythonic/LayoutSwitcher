@@ -29,7 +29,7 @@ extension NSSpellChecker: SpellChecking {}
 /// dictionary for the requested language (the same database used by Mail, Pages, Notes…).
 @MainActor
 final class SystemSpellCheckerDictionary: WordDictionary {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "SystemSpell")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "SystemSpell")
     /// Default bounded cache capacity for spell-check lookup memoization.
     nonisolated static let defaultCacheCapacity = 10_000
 

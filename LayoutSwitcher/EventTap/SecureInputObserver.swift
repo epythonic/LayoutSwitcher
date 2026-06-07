@@ -16,7 +16,7 @@ extension Timer: SecureInputPolling {}
 /// global event stream — in that mode CGEventTap stops receiving keystrokes.
 @MainActor
 final class SecureInputObserver {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "SecureInput")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "SecureInput")
 
     typealias SecureInputStatusProvider = @MainActor () -> Bool
     typealias PollingTimerFactory = @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> any SecureInputPolling

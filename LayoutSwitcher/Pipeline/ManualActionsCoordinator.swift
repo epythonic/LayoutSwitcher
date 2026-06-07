@@ -6,7 +6,7 @@ import os
 /// `TypingPipeline` so the latter stays focused on auto-detection and event routing.
 @MainActor
 final class ManualActionsCoordinator {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "ManualActions")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "ManualActions")
 
     private let detector: LayoutDetector
     private let retyper: Retyper

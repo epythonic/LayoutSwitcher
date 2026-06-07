@@ -5,7 +5,7 @@ import os
 /// Global event tap wrapper responsible for forwarding user input into the pipeline.
 @MainActor
 final class KeyboardEventTap {
-    static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "EventTap")
+    static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "EventTap")
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?

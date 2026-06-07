@@ -7,7 +7,7 @@ import os
 @MainActor
 @Observable
 final class ExclusionList {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Exclusions")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Exclusions")
     private static let defaultsKey = "exclusions.bundleIDs"
     private static let legacyDefaultsKey = "exclusionBundleIDs"
     private static let defaultSeedAppliedKey = "exclusions.defaultSeedApplied"

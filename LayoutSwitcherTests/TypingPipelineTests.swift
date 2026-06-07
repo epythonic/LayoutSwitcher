@@ -748,6 +748,7 @@ struct TypingPipelineTests {
             initialLayoutID: "com.apple.keylayout.RussianWin",
             enabledLayouts: Self.multilingualRetypeSources()
         )
+        fixture.appState.setActiveLanguagePair(.roEn)
         fixture.appState.correctDuplicateLetters = true
 
         for event in try Self.wordEvents("salutt", language: .ro) {
@@ -769,6 +770,7 @@ struct TypingPipelineTests {
             initialLayoutID: "com.apple.keylayout.RussianWin",
             enabledLayouts: Self.multilingualRetypeSources()
         )
+        fixture.appState.setActiveLanguagePair(.roEn)
         fixture.appState.correctDoubleCapitals = true
 
         for event in try Self.wordEvents("SAlut", language: .ro) {
@@ -782,6 +784,117 @@ struct TypingPipelineTests {
         #expect(fixture.recents.entries.first?.corrected == "Salut")
         #expect(fixture.output.selectedLayouts == ["com.apple.keylayout.Romanian-Standard"])
         #expect(fixture.output.playedFeedback == [.doubleCapital])
+    }
+
+    @Test func inactiveLanguagePairSuppressesRomanianSameLanguageCorrection() async throws {
+        let inputSources = FakeInputSources(
+            layouts: [
+                InputSource(id: "com.apple.keylayout.ABC", localizedName: "ABC", primaryLanguage: "en"),
+                InputSource(id: "com.apple.keylayout.RussianWin", localizedName: "Russian", primaryLanguage: "ru"),
+                InputSource(id: "com.apple.keylayout.Romanian-Standard", localizedName: "Romanian", primaryLanguage: "ro")
+            ],
+            currentID: "com.apple.keylayout.Romanian-Standard"
+        )
+        let fixture = try Self.makeFixture(
+            retypeSucceeds: true,
+            initialLayoutID: "com.apple.keylayout.Romanian-Standard",
+            enabledLayouts: Self.multilingualRetypeSources(),
+            inputSources: inputSources
+        )
+        fixture.appState.setActiveLanguagePair(.ruEn)
+        fixture.appState.correctCommonTypos = true
+
+        for event in try Self.wordEvents("vbh", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitForAsyncWorkWindow(nanoseconds: 50_000_000)
+        #expect(fixture.recents.entries.isEmpty)
+        #expect(fixture.output.selectedLayouts.isEmpty)
+        #expect(fixture.output.playedFeedback.isEmpty)
+    }
+
+    @Test func pendingRussianSequenceCanAbsorbVisibleEnglishAcronymWithRussianCorrection() async throws {
+        let fixture = try Self.makeFixture(
+            retypeSucceeds: true,
+            initialLayoutID: "com.apple.keylayout.ABC",
+            enabledLayouts: Self.multilingualRetypeSources()
+        )
+        fixture.appState.correctCommonTypos = true
+
+        for event in try Self.wordEvents("Pfrekxbk", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+        for event in try Self.wordEvents("tbh", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitUntil {
+            fixture.recents.entries.first?.corrected == "Заключил мир"
+        }
+        #expect(fixture.recents.entries.first?.original == "Pfrekxbk tbh")
+        #expect(fixture.recents.entries.first?.corrected == "Заключил мир")
+        #expect(fixture.output.selectedLayouts == ["com.apple.keylayout.RussianWin"])
+    }
+
+    @Test func recentRussianCorrectionContextCanFixFollowingVisibleEnglishAcronymAfterFlush() async throws {
+        let fixture = try Self.makeFixture(
+            retypeSucceeds: true,
+            initialLayoutID: "com.apple.keylayout.ABC",
+            enabledLayouts: Self.multilingualRetypeSources()
+        )
+        fixture.appState.correctCommonTypos = true
+
+        for event in try Self.wordEvents("Pfrekxbk", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitUntil {
+            fixture.recents.entries.first?.corrected == "Заключил"
+        }
+
+        for event in try Self.wordEvents("tbh", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitUntil {
+            fixture.recents.entries.first?.corrected == "мир"
+        }
+        #expect(fixture.recents.entries.first?.original == "tbh")
+        #expect(fixture.recents.entries.first?.corrected == "мир")
+        #expect(fixture.recents.entries.dropFirst().first?.original == "Pfrekxbk")
+        #expect(fixture.recents.entries.dropFirst().first?.corrected == "Заключил")
+    }
+
+    @Test func russianWrongLayoutWordCanContainEnglishPeriodKeyAsLetter() async throws {
+        let fixture = try Self.makeFixture(
+            retypeSucceeds: true,
+            initialLayoutID: "com.apple.keylayout.ABC",
+            enabledLayouts: Self.multilingualRetypeSources()
+        )
+        fixture.appState.correctCommonTypos = true
+
+        for event in try Self.wordEvents("pfrk.xbk", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitUntil {
+            fixture.recents.entries.first?.corrected == "заключил"
+        }
+        #expect(fixture.recents.entries.first?.original == "pfrk.xbk")
+        #expect(fixture.recents.entries.first?.corrected == "заключил")
+
+        for event in try Self.wordEvents("tbh", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitUntil {
+            fixture.recents.entries.first?.corrected == "мир"
+        }
+        #expect(fixture.recents.entries.first?.original == "tbh")
+        #expect(fixture.recents.entries.first?.corrected == "мир")
+        #expect(fixture.recents.entries.dropFirst().first?.original == "pfrk.xbk")
+        #expect(fixture.recents.entries.dropFirst().first?.corrected == "заключил")
     }
 
     @Test func visibleLatinDictionaryWordSuppressesRenderedRussianDictionarySwitch() async throws {
@@ -1348,11 +1461,11 @@ struct TypingPipelineTests {
                     EmbeddedDictionaries.english()
                 ]),
                 .ru: CompositeDictionary(language: .ru, parts: [
-                    InMemoryDictionary(language: .ru, words: ["руда", "ищу"]),
+                    InMemoryDictionary(language: .ru, words: ["руда", "ищу", "заключил", "мир"]),
                     EmbeddedDictionaries.russian()
                 ]),
                 .ro: CompositeDictionary(language: .ro, parts: [
-                    InMemoryDictionary(language: .ro, words: ["accent"]),
+                    InMemoryDictionary(language: .ro, words: ["accent", "vbm"]),
                     EmbeddedDictionaries.romanian()
                 ])
             ],
@@ -1366,6 +1479,10 @@ struct TypingPipelineTests {
             spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: [
                 "bokk": ["book"],
                 "hellp": ["hello"],
+                "ro:vbh": ["vbm"],
+                "Заклучил": ["заключил"],
+                "Закулчил": ["заключил"],
+                "еир": ["мир"],
                 "руддщ": ["руда"],
                 "ищлл": ["ищу"]
             ]),
@@ -1470,7 +1587,7 @@ private struct FixedSuggestionProvider: SpellingSuggestionProviding {
     let suggestionsByWord: [String: [String]]
 
     func suggestions(for word: String, language: LanguageID) -> [String] {
-        suggestionsByWord[word] ?? []
+        suggestionsByWord["\(language.rawValue):\(word)"] ?? suggestionsByWord[word] ?? []
     }
 }
 

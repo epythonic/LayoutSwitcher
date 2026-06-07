@@ -16,7 +16,7 @@ extension Timer: AccessibilityPermissionPolling {}
 @MainActor
 @Observable
 final class AccessibilityPermission {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Accessibility")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Accessibility")
 
     typealias TrustStatusProvider = @MainActor () -> Bool
     typealias TrustPromptRequester = @MainActor () -> Void

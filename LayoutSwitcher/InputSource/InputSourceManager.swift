@@ -7,7 +7,7 @@ import os
 @MainActor
 @Observable
 final class InputSourceManager {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "InputSource")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "InputSource")
 
     /// Reads the currently selected keyboard input source.
     typealias CurrentInputSourceProvider = @MainActor () -> InputSource?

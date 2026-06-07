@@ -8,7 +8,7 @@ import os
 /// expected layout without a manual switch.
 @MainActor
 struct SmartPaste {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "SmartPaste")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "SmartPaste")
     private static let maxClipboardLength = SelectionTextConverter.absoluteMaxSelectionLength
 
     private let inputSources: any InputSourceManaging

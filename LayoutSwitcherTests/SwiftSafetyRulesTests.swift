@@ -1424,11 +1424,11 @@ struct SwiftSafetyRulesTests {
             path: "Fixture.swift"
         ).isEmpty)
         #expect(!Self.loggerDeclarationViolations(
-            in: #"private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "pipeline")"#,
+            in: #"private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "pipeline")"#,
             path: "Fixture.swift"
         ).isEmpty)
         #expect(Self.loggerDeclarationViolations(
-            in: #"private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Pipeline")"#,
+            in: #"private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Pipeline")"#,
             path: "Fixture.swift"
         ).isEmpty)
         #expect(!Self.todoMarkerViolations(
@@ -2206,8 +2206,8 @@ struct SwiftSafetyRulesTests {
 
                 let subsystem = parts[1]
                 let category = parts[3]
-                if subsystem != "GIH.LayoutSwitcher" {
-                    return "\(path):\(index + 1): Logger subsystem must be GIH.LayoutSwitcher"
+                if subsystem != "GM.LayoutSwitcher" {
+                    return "\(path):\(index + 1): Logger subsystem must be GM.LayoutSwitcher"
                 }
                 if category.range(of: categoryPattern, options: .regularExpression) == nil {
                     return "\(path):\(index + 1): Logger category must be PascalCase"

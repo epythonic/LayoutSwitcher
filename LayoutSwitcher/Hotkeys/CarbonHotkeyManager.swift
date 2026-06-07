@@ -10,7 +10,7 @@ import os
 /// require Accessibility permission to register.
 @MainActor
 final class CarbonHotkeyManager {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "CarbonHotkey")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "CarbonHotkey")
     /// FourCharCode 'LSWT' identifier used for all hotkey IDs from this app.
     private static let signature: OSType = 0x4C53_5754
 

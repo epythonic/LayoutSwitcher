@@ -5,7 +5,7 @@ import os
 @MainActor
 @Observable
 final class UserDictionary: WordDictionary {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "UserDictionary")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "UserDictionary")
 
     let language: LanguageID
     private(set) var words: Set<String>

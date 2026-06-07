@@ -36,7 +36,7 @@ struct AutoSwitchRecord: Sendable {
 /// Executes hotkey actions by orchestrating buffer state, retyping, and analytics updates.
 @MainActor
 final class HotkeyCoordinator {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Hotkey")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Hotkey")
 
     private let buffer: WordBuffer
     private let mapping: any KeyboardMapping

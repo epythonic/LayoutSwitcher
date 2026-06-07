@@ -89,7 +89,7 @@ struct HelpBodyLoader {
     typealias ResourceLoader = @MainActor (HelpSection.HelpLanguage) -> String?
 
     /// Help loader diagnostics logger.
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Help")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Help")
     /// Injected markdown resource loader.
     private let resourceLoader: ResourceLoader
     /// Parsed bodies cached per language and section ID.

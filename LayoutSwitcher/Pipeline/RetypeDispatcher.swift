@@ -34,7 +34,7 @@ struct AutoSwitchCooldownEntry: Sendable {
 /// a non-empty `[PendingRetypeCandidate]` batch ready to apply.
 @MainActor
 final class RetypeDispatcher {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "RetypeDispatch")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "RetypeDispatch")
 
     private let retyper: Retyper
     let stats: UsageStats

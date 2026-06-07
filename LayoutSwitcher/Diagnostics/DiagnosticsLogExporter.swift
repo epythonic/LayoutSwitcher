@@ -7,7 +7,7 @@ struct DiagnosticsLogExporter {
     typealias RunLogShow = @MainActor ([String]) async throws -> Data
     typealias WriteData = @MainActor (Data, URL) throws -> Void
 
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "ExportLogs")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "ExportLogs")
 
     /// Error returned when `/usr/bin/log show` exits unsuccessfully.
     struct LogShowFailure: LocalizedError, Equatable {
@@ -40,7 +40,7 @@ struct DiagnosticsLogExporter {
     /// Arguments used to export recent LayoutSwitcher unified-log entries.
     static let defaultArguments = [
         "show",
-        "--predicate", "subsystem == 'GIH.LayoutSwitcher'",
+        "--predicate", "subsystem == 'GM.LayoutSwitcher'",
         "--info",
         "--last", "1h"
     ]

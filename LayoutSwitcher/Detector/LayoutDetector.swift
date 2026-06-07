@@ -50,7 +50,7 @@ enum LayoutDecision: Equatable, Sendable {
 /// and returns a domain decision without posting events or changing layouts.
 @MainActor
 struct LayoutDetector {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "Detector")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Detector")
 
     /// Tie-break priority when candidates have identical ngram scores.
     /// Lower rank == higher priority. Cyrillic first (ru, uk), then ro, then en.
@@ -179,7 +179,12 @@ struct LayoutDetector {
         let raw = mapping.render(buffer, in: activeLanguage)
         let length = raw.count
         let ambiguousChars = mapping.ambiguousWordInternalCharacters
-        if NonConvertibleTokenGuard.shouldKeep(raw) {
+        if shouldKeepNonConvertibleRaw(
+            raw,
+            buffer: buffer,
+            activeLanguage: activeLanguage,
+            allowedTargetLanguages: allowedTargetLanguages
+        ) {
             Self.logger.debug("keep raw=\"\(raw, privacy: .public)\" non-convertible token")
             return .keep
         }
@@ -372,49 +377,16 @@ struct LayoutDetector {
             }
         }
 
-        if autoAddRussianYo, activeLanguage == .ru {
-            if let corrected = currentRussianYoResolver()?.unambiguousCorrection(for: raw),
-               raw != corrected,
-               wordMatchesAlphabet(corrected, of: .ru) {
-                Self.logger.debug("switch lang=ru text=\"\(corrected, privacy: .public)\" russian-yo=true")
-                return .switchAndRetypeWithFeedback(corrected: corrected, target: .ru, kind: .russianYo)
-            }
-        } else if activeLanguage == .ru {
-            Self.logger.debug("russian-yo skipped: feature disabled")
-        }
-
-        if correctDoubleCapitals,
-           let activeDictionary = dictionaries[activeLanguage],
-           let corrected = DoubleCapitalCorrector().correction(
-               for: raw,
-               dictionary: activeDictionary,
-               thresholds: activeThresholds
-            ) {
-            Self.logger.debug("switch lang=\(activeLanguage.rawValue, privacy: .public) text=\"\(corrected, privacy: .public)\" double-capital=true")
-            return .switchAndRetypeWithFeedback(corrected: corrected, target: activeLanguage, kind: .doubleCapital)
-        }
-
-        if correctDuplicateLetters,
-           let active = candidates.first(where: { $0.language == activeLanguage }),
-           !active.dictHit,
-           let activeDictionary = dictionaries[activeLanguage] {
-            let corrector = DuplicateLetterCorrector()
-            if let correction = corrector.correction(
-                for: raw,
-                language: activeLanguage,
-                dictionary: activeDictionary,
-                scorer: languageScorer,
-                thresholds: activeThresholds
-            ), wordMatchesAlphabet(correction.corrected, of: activeLanguage) {
-                let corrected = chainedDoubleCapitalCorrection(
-                    after: correction.corrected,
-                    isEnabled: correctDoubleCapitals,
-                    dictionary: activeDictionary,
-                    thresholds: activeThresholds
-                )
-                Self.logger.debug("switch lang=\(activeLanguage.rawValue, privacy: .public) text=\"\(corrected, privacy: .public)\" duplicate-letter scoreGain=\(correction.scoreGain, privacy: .public)")
-                return .switchAndRetypeWithFeedback(corrected: corrected, target: activeLanguage, kind: .duplicateLetter)
-            }
+        if let correction = sameLanguageTextCorrection(
+            raw: raw,
+            activeLanguage: activeLanguage,
+            activeDictionary: dictionaries[activeLanguage],
+            autoAddRussianYo: autoAddRussianYo,
+            correctDoubleCapitals: correctDoubleCapitals,
+            correctDuplicateLetters: correctDuplicateLetters,
+            thresholds: activeThresholds
+        ) {
+            return correction
         }
 
         // 1. Active language is itself valid in dictionary -> usually keep.
@@ -492,6 +464,34 @@ struct LayoutDetector {
         return .keep
     }
 
+    private func shouldKeepNonConvertibleRaw(
+        _ raw: String,
+        buffer: [WordChar],
+        activeLanguage: LanguageID,
+        allowedTargetLanguages: Set<LanguageID>?
+    ) -> Bool {
+        guard NonConvertibleTokenGuard.shouldKeep(raw) else { return false }
+        let ambiguousChars = mapping.ambiguousWordInternalCharacters
+        guard raw.contains(where: { ambiguousChars.contains($0) }),
+              raw.allSatisfy({ $0.isLetter || ambiguousChars.contains($0) }) else {
+            return true
+        }
+
+        for language in LanguageID.allCases where language != activeLanguage {
+            if let allowedTargetLanguages, !allowedTargetLanguages.contains(language) {
+                continue
+            }
+            let rendered = mapping.render(buffer, in: language)
+            guard rendered != raw,
+                  wordMatchesAlphabet(rendered, of: language),
+                  dictionaries[language]?.contains(rendered) == true else {
+                continue
+            }
+            return false
+        }
+        return true
+    }
+
     private func typoCorrectedDecision(
         for raw: String,
         language: LanguageID,
@@ -560,46 +560,16 @@ struct LayoutDetector {
             }
         }
 
-        if autoAddRussianYo, activeLanguage == .ru {
-            if let corrected = currentRussianYoResolver()?.unambiguousCorrection(for: raw),
-               raw != corrected,
-               wordMatchesAlphabet(corrected, of: .ru) {
-                Self.logger.debug("switch lang=ru text=\"\(corrected, privacy: .public)\" russian-yo=true visible=true")
-                return .switchAndRetypeWithFeedback(corrected: corrected, target: .ru, kind: .russianYo)
-            }
-        }
-
-        if correctDoubleCapitals,
-           let activeDictionary = dictionaries[activeLanguage],
-           let corrected = DoubleCapitalCorrector().correction(
-               for: raw,
-               dictionary: activeDictionary,
-               thresholds: activeThresholds
-           ) {
-            Self.logger.debug("switch lang=\(activeLanguage.rawValue, privacy: .public) text=\"\(corrected, privacy: .public)\" double-capital=true visible=true")
-            return .switchAndRetypeWithFeedback(corrected: corrected, target: activeLanguage, kind: .doubleCapital)
-        }
-
-        if correctDuplicateLetters,
-           let activeDictionary = dictionaries[activeLanguage],
-           !activeDictionary.contains(raw) {
-            let corrector = DuplicateLetterCorrector()
-            if let correction = corrector.correction(
-                for: raw,
-                language: activeLanguage,
-                dictionary: activeDictionary,
-                scorer: languageScorer,
-                thresholds: activeThresholds
-            ), wordMatchesAlphabet(correction.corrected, of: activeLanguage) {
-                let corrected = chainedDoubleCapitalCorrection(
-                    after: correction.corrected,
-                    isEnabled: correctDoubleCapitals,
-                    dictionary: activeDictionary,
-                    thresholds: activeThresholds
-                )
-                Self.logger.debug("switch lang=\(activeLanguage.rawValue, privacy: .public) text=\"\(corrected, privacy: .public)\" duplicate-letter visible=true scoreGain=\(correction.scoreGain, privacy: .public)")
-                return .switchAndRetypeWithFeedback(corrected: corrected, target: activeLanguage, kind: .duplicateLetter)
-            }
+        if let correction = sameLanguageTextCorrection(
+            raw: raw,
+            activeLanguage: activeLanguage,
+            activeDictionary: dictionaries[activeLanguage],
+            autoAddRussianYo: autoAddRussianYo,
+            correctDoubleCapitals: correctDoubleCapitals,
+            correctDuplicateLetters: correctDuplicateLetters,
+            thresholds: activeThresholds
+        ) {
+            return correction
         }
 
         if correctCommonTypos,
@@ -620,6 +590,64 @@ struct LayoutDetector {
         }
 
         return .keep
+    }
+
+    /// Same-language corrections that read the rendered text directly: Russian ё
+    /// restoration, double-capital fix, and duplicate-letter fix. Shared by
+    /// `decide` and `decideVisibleTextCorrection` so the two paths cannot drift.
+    /// Romanian diacritics and Cupertino typos stay with their callers because
+    /// they differ between the keystroke and visible-text paths.
+    private func sameLanguageTextCorrection(
+        raw: String,
+        activeLanguage: LanguageID,
+        activeDictionary: (any WordDictionary)?,
+        autoAddRussianYo: Bool,
+        correctDoubleCapitals: Bool,
+        correctDuplicateLetters: Bool,
+        thresholds: DetectionThresholds
+    ) -> LayoutDecision? {
+        if autoAddRussianYo, activeLanguage == .ru,
+           let corrected = currentRussianYoResolver()?.unambiguousCorrection(for: raw),
+           raw != corrected,
+           wordMatchesAlphabet(corrected, of: .ru) {
+            Self.logger.debug("switch lang=ru text=\"\(corrected, privacy: .public)\" russian-yo=true")
+            return .switchAndRetypeWithFeedback(corrected: corrected, target: .ru, kind: .russianYo)
+        }
+
+        if correctDoubleCapitals,
+           let activeDictionary,
+           let corrected = DoubleCapitalCorrector().correction(
+               for: raw,
+               dictionary: activeDictionary,
+               thresholds: thresholds
+           ) {
+            Self.logger.debug("switch lang=\(activeLanguage.rawValue, privacy: .public) text=\"\(corrected, privacy: .public)\" double-capital=true")
+            return .switchAndRetypeWithFeedback(corrected: corrected, target: activeLanguage, kind: .doubleCapital)
+        }
+
+        if correctDuplicateLetters,
+           let activeDictionary,
+           !activeDictionary.contains(raw) {
+            let corrector = DuplicateLetterCorrector()
+            if let correction = corrector.correction(
+                for: raw,
+                language: activeLanguage,
+                dictionary: activeDictionary,
+                scorer: languageScorer,
+                thresholds: thresholds
+            ), wordMatchesAlphabet(correction.corrected, of: activeLanguage) {
+                let corrected = chainedDoubleCapitalCorrection(
+                    after: correction.corrected,
+                    isEnabled: correctDoubleCapitals,
+                    dictionary: activeDictionary,
+                    thresholds: thresholds
+                )
+                Self.logger.debug("switch lang=\(activeLanguage.rawValue, privacy: .public) text=\"\(corrected, privacy: .public)\" duplicate-letter scoreGain=\(correction.scoreGain, privacy: .public)")
+                return .switchAndRetypeWithFeedback(corrected: corrected, target: activeLanguage, kind: .duplicateLetter)
+            }
+        }
+
+        return nil
     }
 
     private func chainedDoubleCapitalCorrection(

@@ -4,7 +4,7 @@ import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "AppDelegate")
+    static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "AppDelegate")
     private static let xctestConfigurationEnvironmentKey = "XCTestConfigurationFilePath"
     private static let uiTestingEnvironmentKey = "LAYOUTSWITCHER_UI_TESTING"
     private static let uiTestingOpenSettingsEnvironmentKey = "LAYOUTSWITCHER_UI_TESTING_OPEN_SETTINGS"

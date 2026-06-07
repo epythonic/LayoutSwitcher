@@ -9,7 +9,7 @@ import os
 @MainActor
 @Observable
 final class PerAppLayoutPreferences {
-    private static let logger = Logger(subsystem: "GIH.LayoutSwitcher", category: "PerAppLayout")
+    private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "PerAppLayout")
     private static let defaultsKey = "settings.perAppLayoutPreferences"
 
     private(set) var entries: [String: String]
