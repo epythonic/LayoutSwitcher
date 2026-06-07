@@ -20,3 +20,7 @@ Package.resolved
 
 # Local agent / tooling state
 .claude/
+
+# Swift toolchain installer artifacts (swiftly)
+swiftly.pkg
+.swift-version
