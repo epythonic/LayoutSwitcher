@@ -59,23 +59,30 @@ struct DictionaryTests {
         #expect(secondRomanian.contains("bună"))
     }
 
-    @Test func bundledFallbacksReturnStableValuesPerLanguage() {
-        let firstEnglish = BundledDictionaryLoader.loadOrEmbedded(language: .en)
-        let secondEnglish = BundledDictionaryLoader.loadOrEmbedded(language: .en)
-        let firstRussian = BundledDictionaryLoader.loadOrEmbedded(language: .ru)
-        let secondRussian = BundledDictionaryLoader.loadOrEmbedded(language: .ru)
-        let firstUkrainian = BundledDictionaryLoader.loadOrEmbedded(language: .uk)
-        let secondUkrainian = BundledDictionaryLoader.loadOrEmbedded(language: .uk)
-        let firstRomanian = BundledDictionaryLoader.loadOrEmbedded(language: .ro)
-        let secondRomanian = BundledDictionaryLoader.loadOrEmbedded(language: .ro)
+    @Test func bundledFallbacksProvideExpectedWordsPerLanguage() {
+        let english = BundledDictionaryLoader.loadOrEmbedded(language: .en)
+        let russian = BundledDictionaryLoader.loadOrEmbedded(language: .ru)
+        let ukrainian = BundledDictionaryLoader.loadOrEmbedded(language: .uk)
+        let romanian = BundledDictionaryLoader.loadOrEmbedded(language: .ro)
 
-        #expect(firstEnglish.size == secondEnglish.size)
-        #expect(firstRussian.size == secondRussian.size)
-        #expect(firstUkrainian.size == secondUkrainian.size)
-        #expect(firstRomanian.size == secondRomanian.size)
-        #expect(secondEnglish.contains("hello"))
-        #expect(secondRussian.contains("привет"))
-        #expect(secondUkrainian.contains("привіт"))
-        #expect(secondRomanian.contains("bună"))
+        #expect(english.contains("hello"))
+        #expect(russian.contains("привет"))
+        #expect(ukrainian.contains("привіт"))
+        #expect(romanian.contains("bună"))
+        #expect(english.size > 50)
+        #expect(russian.size > 50)
+    }
+
+    @Test func lazyEmbeddedDictionaryDefersAndMemoizesBuild() {
+        var builds = 0
+        let dict = LazyEmbeddedDictionary(language: .en) {
+            builds += 1
+            return InMemoryDictionary(language: .en, words: ["book"])
+        }
+
+        #expect(builds == 0)            // construction must not parse anything
+        #expect(dict.contains("book"))  // first lookup triggers the build
+        #expect(!dict.contains("ghbdtn"))
+        #expect(builds == 1)            // built once, then memoized
     }
 }

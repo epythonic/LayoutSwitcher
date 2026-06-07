@@ -4,12 +4,6 @@ import os
 /// Loads plain-text dictionary corpora bundled with the app.
 enum BundledDictionaryLoader {
     private static let logger = Logger(subsystem: "GM.LayoutSwitcher", category: "Dictionary")
-    private static let cachedFallbacks: [LanguageID: InMemoryDictionary] = [
-        .en: Self.load(language: .en, resourceName: LanguageID.en.rawValue) ?? EmbeddedDictionaries.english(),
-        .ru: Self.load(language: .ru, resourceName: LanguageID.ru.rawValue) ?? EmbeddedDictionaries.russian(),
-        .uk: Self.load(language: .uk, resourceName: LanguageID.uk.rawValue) ?? EmbeddedDictionaries.ukrainian(),
-        .ro: Self.load(language: .ro, resourceName: LanguageID.ro.rawValue) ?? EmbeddedDictionaries.romanian()
-    ]
 
     /// Attempts to read `<resourceName>.txt` and convert lines into an in-memory dictionary.
     static func load(language: LanguageID, resourceName: String, bundle: Bundle = .main) -> InMemoryDictionary? {
@@ -29,9 +23,26 @@ enum BundledDictionaryLoader {
         }
     }
 
-    /// Resolves a dictionary from bundle resources or falls back to built-in embedded corpora.
-    static func loadOrEmbedded(language: LanguageID) -> InMemoryDictionary {
-        cachedFallbacks[language] ?? EmbeddedDictionaries.english()
+    /// Resolves a fallback dictionary for `language`, deferred until first use.
+    ///
+    /// The returned dictionary parses its bundled `<lang>.txt` (multi-MB) only on
+    /// the first lookup, so languages outside the active pair are never read and
+    /// the parse cost stays off the launch path. The in-source embedded corpus is
+    /// the last resort when the bundle resource is missing.
+    static func loadOrEmbedded(language: LanguageID) -> any WordDictionary {
+        LazyEmbeddedDictionary(language: language) {
+            load(language: language, resourceName: language.rawValue) ?? embeddedCorpus(for: language)
+        }
+    }
+
+    /// In-source corpus used only when the bundled `.txt` resource is unavailable.
+    private static func embeddedCorpus(for language: LanguageID) -> InMemoryDictionary {
+        switch language {
+        case .en: return EmbeddedDictionaries.english()
+        case .ru: return EmbeddedDictionaries.russian()
+        case .uk: return EmbeddedDictionaries.ukrainian()
+        case .ro: return EmbeddedDictionaries.romanian()
+        }
     }
 
     /// Resolves raw corpus words from bundle resources or embedded fallback lists.
@@ -53,4 +64,35 @@ enum BundledDictionaryLoader {
             return nil
         }
     }
+}
+
+/// Builds an embedded fallback dictionary on first lookup, then memoizes it.
+///
+/// Construction is cheap, so composing a detector for every language parses no
+/// word lists until one is actually queried — and languages outside the active
+/// pair (which `decide()` never scores) are never parsed at all. Main-actor
+/// isolated like the detector that owns it.
+@MainActor
+final class LazyEmbeddedDictionary: WordDictionary {
+    let language: LanguageID
+    private let build: @MainActor () -> InMemoryDictionary
+    private var loaded: InMemoryDictionary?
+
+    init(language: LanguageID, build: @escaping @MainActor () -> InMemoryDictionary) {
+        self.language = language
+        self.build = build
+    }
+
+    private func resolve() -> InMemoryDictionary {
+        if let loaded { return loaded }
+        let dictionary = build()
+        loaded = dictionary
+        return dictionary
+    }
+
+    func contains(_ word: String) -> Bool { resolve().contains(word) }
+
+    /// Builds (if needed) and reports the underlying size. Not used on any
+    /// production path, so this does not compromise lazy loading at runtime.
+    var size: Int { resolve().size }
 }
