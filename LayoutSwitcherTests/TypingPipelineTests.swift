@@ -1460,6 +1460,23 @@ struct TypingPipelineTests {
         #expect(!fixture.pipeline.isRetyping)
     }
 
+    @Test func inlineAutoReplaceExpandsTriggerWord() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "TypingPipelineTests.autoReplace"))
+        defaults.removePersistentDomain(forName: "TypingPipelineTests.autoReplace")
+        let rules = AutoReplaceRules(defaults: defaults)
+        rules.upsert(trigger: "brb", replacement: "be right back")
+
+        let fixture = try Self.makeFixture(retypeSucceeds: true, autoReplaceRules: rules)
+        for event in try Self.wordEvents("brb", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitForAsyncWorkWindow(nanoseconds: 50_000_000)
+        // 3 trigger chars + separator erased; replacement typed as Unicode; space re-emitted.
+        #expect(Array(fixture.output.postedKeys.prefix(4)) == [51, 51, 51, 51])
+        #expect(fixture.output.postedUnicode.contains("be right back"))
+    }
+
     @Test func mouseClickMidWordResetsBufferWithoutStaleFragment() async throws {
         let fixture = try Self.makeFixture(retypeSucceeds: true)
 
@@ -1508,7 +1525,8 @@ struct TypingPipelineTests {
         enabledLayouts: [RetypeInputSource]? = nil,
         presentationDetector: PresentationModeDetector? = nil,
         detector injectedDetector: LayoutDetector? = nil,
-        inputSources injectedInputSources: FakeInputSources? = nil
+        inputSources injectedInputSources: FakeInputSources? = nil,
+        autoReplaceRules: AutoReplaceRules? = nil
     ) throws -> PipelineFixture {
         let enabledLayouts = enabledLayouts ?? [RetypeInputSource(id: "com.apple.keylayout.RussianWin", primaryLanguage: "ru")]
         let output = RetypeOutput()
@@ -1586,6 +1604,7 @@ struct TypingPipelineTests {
             exclusions: ExclusionList(defaults: isolatedDefaults, localizedNameProvider: { _ in nil }),
             stats: stats,
             recents: recents,
+            autoReplaceRules: autoReplaceRules,
             tunables: .default,
             sleepBeforeSequenceFlush: { _ in await Task.yield() },
             now: { currentDate }

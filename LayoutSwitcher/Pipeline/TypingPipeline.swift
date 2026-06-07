@@ -22,6 +22,7 @@ final class TypingPipeline {
     let stats: UsageStats
     let recents: RecentSwitches
     let perAppLayouts: PerAppLayoutPreferences?
+    private let autoReplaceRules: AutoReplaceRules?
     private let learningCache: LearningCache?
     private let presentationDetector: PresentationModeDetector?
     private let notificationManager: NotificationManager?
@@ -60,6 +61,7 @@ final class TypingPipeline {
         stats: UsageStats,
         recents: RecentSwitches,
         perAppLayouts: PerAppLayoutPreferences? = nil,
+        autoReplaceRules: AutoReplaceRules? = nil,
         tunables: PipelineTunables,
         bundleNameProvider: @escaping @MainActor (String) -> String? = { _ in nil },
         sleepBeforeSequenceFlush: @escaping @MainActor @Sendable (Duration) async -> Void,
@@ -78,6 +80,7 @@ final class TypingPipeline {
         self.stats = stats
         self.recents = recents
         self.perAppLayouts = perAppLayouts
+        self.autoReplaceRules = autoReplaceRules
         self.tunables = tunables
         let dispatcher = RetypeDispatcher(
             retyper: retyper,
@@ -208,6 +211,20 @@ final class TypingPipeline {
         }
         guard isSafeFinalSeparator(word.separator) else {
             resetPendingSequence(clearCooldown: true)
+            return
+        }
+
+        // Inline auto-replace takes precedence: an exact trigger expands verbatim.
+        if let autoReplaceRules, autoReplaceRules.isInlineEnabled,
+           let replacement = autoReplaceRules.replacement(for: word.text) {
+            retyper.expand(
+                original: word.characters,
+                replacement: replacement,
+                separator: word.separator,
+                separatorFlags: word.separatorFlags
+            )
+            resetPendingSequence(clearCooldown: true)
+            Self.logger.info("auto-replace: \"\(word.text, privacy: .public)\" → \"\(replacement, privacy: .public)\"")
             return
         }
 

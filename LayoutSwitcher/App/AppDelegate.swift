@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Retains the wake-from-sleep observer so input sources are reconciled after wake.
     private var wakeObserver: (any NSObjectProtocol)?
     let exclusions = ExclusionList(defaults: .standard, workspace: .shared)
+    let autoReplaceRules = AutoReplaceRules(defaults: .standard)
     let perAppLayouts = PerAppLayoutPreferences(
         defaults: .standard,
         appNameProvider: { ExclusionList.localizedName(for: $0, workspace: .shared) }
@@ -152,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stats: stats,
             recents: recents,
             perAppLayouts: perAppLayouts,
+            autoReplaceRules: autoReplaceRules,
             tunables: .default,
             bundleNameProvider: { ExclusionList.localizedName(for: $0, workspace: .shared) },
             sleepBeforeSequenceFlush: { duration in

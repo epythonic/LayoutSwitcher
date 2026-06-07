@@ -346,6 +346,33 @@ struct Retyper {
         return .success
     }
 
+    /// Erases the trigger word + its separator and types `replacement` verbatim as
+    /// Unicode (no layout switch), then re-emits the separator. Used by inline
+    /// auto-replace, where the replacement must appear exactly as configured.
+    func expand(
+        original: [WordChar],
+        replacement: String,
+        separator: WordSeparator,
+        separatorFlags: CGEventFlags = []
+    ) {
+        guard !original.isEmpty, !replacement.isEmpty else { return }
+        capsLockGuard.captureAndDisable()
+        defer { capsLockGuard.restore() }
+
+        for _ in 0..<(original.count + 1) {
+            postKeyEvent(51, []) // backspace (trigger chars + separator)
+        }
+        postUnicodeEvent(replacement)
+
+        let shift: CGEventFlags = separatorFlags.contains(.maskShift) ? [.maskShift] : []
+        switch separator {
+        case .space: postKeyEvent(49, shift)
+        case .enter: postKeyEvent(36, shift)
+        case .tab: postKeyEvent(48, shift)
+        case .punctuation(let character): postUnicodeEvent(String(character))
+        }
+    }
+
     private func encode(
         _ character: Character,
         targetSource: RetypeInputSource,
