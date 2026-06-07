@@ -1442,6 +1442,42 @@ struct TypingPipelineTests {
         }
     }
 
+    @Test func rapidBurstOfWordsStaysConsistent() async throws {
+        let fixture = try Self.makeFixture(retypeSucceeds: true)
+        let initialCommitted = fixture.stats.wordsCommittedTotal
+        let wordCount = 100
+
+        for _ in 0..<wordCount {
+            for event in try Self.wordEvents("ghbdtn", language: .en) {
+                fixture.pipeline.handle(event)
+            }
+        }
+
+        // Every committed word is counted synchronously; the burst must not drop,
+        // double-count, or wedge the pipeline in a retyping state.
+        await Self.waitUntil { !fixture.pipeline.isRetyping }
+        #expect(fixture.stats.wordsCommittedTotal == initialCommitted + wordCount)
+        #expect(!fixture.pipeline.isRetyping)
+    }
+
+    @Test func mouseClickMidWordResetsBufferWithoutStaleFragment() async throws {
+        let fixture = try Self.makeFixture(retypeSucceeds: true)
+
+        // Type a fragment with no separator, then click (reset), then a full word.
+        for event in [Self.key(5, "g"), Self.key(4, "h"), Self.key(11, "b")] {
+            fixture.pipeline.handle(event)
+        }
+        fixture.pipeline.handle(KeyEvent(kind: .leftMouseDown, keyCode: 0, unicode: ""))
+        for event in try Self.wordEvents("ghbdtn", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitUntil { fixture.recents.entries.first?.corrected == "привет" }
+        // The pre-click "ghb" must not leak into the correction's original text.
+        #expect(fixture.recents.entries.first?.original == "ghbdtn")
+        #expect(fixture.recents.entries.first?.corrected == "привет")
+    }
+
     @Test func presentationModeSuppressesAutoSwitch() async throws {
         let fixture = try Self.makeFixture(retypeSucceeds: true, presentationDetector: PresentationModeDetector(
             frontmostBundleIDProvider: { "com.apple.iWork.Keynote" }

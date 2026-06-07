@@ -235,6 +235,34 @@ struct LayoutDetectorTests {
         #expect(elapsed < .seconds(5), "decide() x5000 exceeded budget: \(elapsed)")
     }
 
+    @Test(arguments: [
+        "😀😀😀",                          // emoji (non-letter)
+        "abc123def",                       // mixed letters + digits
+        String(repeating: "a", count: 64)  // over the max word length
+    ])
+    func visibleTextCorrectionKeepsNonWordInput(_ text: String) {
+        for language in LanguageID.allCases {
+            let decision = detector.decideVisibleTextCorrection(
+                text: text,
+                language: language,
+                autoAddRomanianDiacritics: true,
+                autoAddRussianYo: true,
+                correctDoubleCapitals: true,
+                correctDuplicateLetters: true,
+                correctCommonTypos: true
+            )
+            #expect(decision == .keep, "expected keep for \"\(text)\" in \(language.rawValue)")
+        }
+    }
+
+    @Test func decideMakesNoCorrectionForEmptyOrOverlongBuffers() {
+        // Degenerate buffers must never produce a retype — only keep/ambiguous.
+        #expect(detector.decide(buffer: [], activeLanguage: .en).retypePayload == nil)
+
+        let overlong = chars(String(repeating: "a", count: 40), language: .en)
+        #expect(detector.decide(buffer: overlong, activeLanguage: .en).retypePayload == nil)
+    }
+
     @Test func cupertinoFallsBackWhenDictionaryLacksSuggestionCandidate() {
         let detector = LayoutDetector(
             mapping: RuEnQwertyMapping(),
