@@ -98,8 +98,11 @@ final class InputSourceManager {
         observerHandle = nil
     }
 
-    /// Handles external layout switch and emits `onChange` only for true transitions.
-    private func handleSystemChange() {
+    /// Re-reads the current layout and emits change callbacks only for true
+    /// transitions. Invoked by selected-source / enabled-sources notifications
+    /// and after wake-from-sleep, so a stale cached `current` is reconciled with
+    /// live system state (input-source hot-plug, add/remove, wake).
+    func reconcileCurrentInputSource() {
         let previousID = current?.id
         refresh()
         if current?.id != previousID {
@@ -133,32 +136,32 @@ final class InputSourceManager {
     private static func registerSystemChangeObserver(for manager: InputSourceManager) -> UnsafeMutableRawPointer? {
         let center = CFNotificationCenterGetDistributedCenter()
         let observer = Unmanaged.passUnretained(manager).toOpaque()
-
-        CFNotificationCenterAddObserver(
-            center,
-            observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let manager = Unmanaged<InputSourceManager>.fromOpaque(observer).takeUnretainedValue()
-                Task { @MainActor in
-                    manager.handleSystemChange()
-                }
-            },
+        let callback: CFNotificationCallback = { _, observer, _, _, _ in
+            guard let observer else { return }
+            let manager = Unmanaged<InputSourceManager>.fromOpaque(observer).takeUnretainedValue()
+            Task { @MainActor in
+                manager.reconcileCurrentInputSource()
+            }
+        }
+        // Observe both the selected source changing and the set of enabled
+        // sources changing (layout added/removed, keyboard hot-plug).
+        for name in [
             kTISNotifySelectedKeyboardInputSourceChanged as CFString,
-            nil,
-            .deliverImmediately
-        )
+            kTISNotifyEnabledKeyboardInputSourcesChanged as CFString
+        ] {
+            CFNotificationCenterAddObserver(center, observer, callback, name, nil, .deliverImmediately)
+        }
         return observer
     }
 
     /// Removes the system distributed notification observer for layout changes.
     private static func unregisterSystemChangeObserver(_ observer: UnsafeMutableRawPointer) {
         let center = CFNotificationCenterGetDistributedCenter()
-        CFNotificationCenterRemoveObserver(
-            center,
-            observer,
-            CFNotificationName(kTISNotifySelectedKeyboardInputSourceChanged),
-            nil
-        )
+        for name in [
+            kTISNotifySelectedKeyboardInputSourceChanged as CFString,
+            kTISNotifyEnabledKeyboardInputSourcesChanged as CFString
+        ] {
+            CFNotificationCenterRemoveObserver(center, observer, CFNotificationName(name), nil)
+        }
     }
 }

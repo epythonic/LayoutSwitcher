@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let wordBuffer = WordBuffer(now: Date.init)
     let focusedApp = FocusedAppObserver(workspace: .shared)
     let inputSources = InputSourceManager()
+    /// Retains the wake-from-sleep observer so input sources are reconciled after wake.
+    private var wakeObserver: (any NSObjectProtocol)?
     let exclusions = ExclusionList(defaults: .standard, workspace: .shared)
     let perAppLayouts = PerAppLayoutPreferences(
         defaults: .standard,
@@ -216,6 +218,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.statusItemController?.updateLayoutBadge(snapshot?.primaryLanguage)
         }
         inputSources.startObservingSystemChanges()
+        // After wake-from-sleep the cached current source can be stale; reconcile it.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.inputSources.reconcileCurrentInputSource()
+            }
+        }
 
         pipeline.hotkeyCoordinator = hotkeyCoordinator
         hotkeyCoordinator.typingPipeline = pipeline
