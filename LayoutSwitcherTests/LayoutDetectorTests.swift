@@ -169,6 +169,72 @@ struct LayoutDetectorTests {
         #expect(decision.retypePayload?.kind == .cupertino)
     }
 
+    /// General Cupertino typo path (via spell-check suggestions, not curated
+    /// overrides), parameterised across languages. Pins that a real misspelling
+    /// with a dictionary-valid suggestion is corrected as `.cupertino`.
+    @Test(arguments: [
+        (typo: "bokk", language: LanguageID.en, expected: "book"),
+        (typo: "hellp", language: LanguageID.en, expected: "hello"),
+        (typo: "приввет", language: LanguageID.ru, expected: "привет"),
+        (typo: "bunaa", language: LanguageID.ro, expected: "bună")
+    ])
+    func cupertinoCorrectsGeneralTypoFromSuggestions(
+        _ testCase: (typo: String, language: LanguageID, expected: String)
+    ) {
+        let detector = LayoutDetector(
+            mapping: RuEnQwertyMapping(),
+            dictionaries: [
+                .en: InMemoryDictionary(language: .en, words: ["book", "hello"]),
+                .ru: InMemoryDictionary(language: .ru, words: ["привет"]),
+                .ro: InMemoryDictionary(language: .ro, words: ["bună"])
+            ],
+            ngrams: [
+                .en: NGramModels.english(),
+                .ru: NGramModels.russian(),
+                .ro: NGramModels.romanian()
+            ],
+            spellingSuggestionProvider: FixedSuggestionProvider(suggestionsByWord: [
+                "bokk": ["book"],
+                "hellp": ["hello"],
+                "приввет": ["привет"],
+                "bunaa": ["bună"]
+            ]),
+            thresholds: DetectionThresholds(cupertinoScoreMargin: 0.0)
+        )
+
+        let decision = detector.decide(
+            buffer: chars(testCase.typo, language: testCase.language),
+            activeLanguage: testCase.language,
+            correctCommonTypos: true
+        )
+
+        #expect(decision.retypePayload?.corrected == testCase.expected)
+        #expect(decision.retypePayload?.kind == .cupertino)
+    }
+
+    /// Generous performance ceiling. Detection runs synchronously on the
+    /// keystroke (main-thread) path, so `decide()` must stay cheap. This is a
+    /// regression guard against accidental O(n^2) work or synchronous I/O
+    /// creeping into the hot path — not a microbenchmark. System spell-check
+    /// cost is separately bounded by the dictionary/guesses caches; see the
+    /// performance note in docs/DecisionModel.md.
+    @Test func decideStaysWithinMainThreadBudget() {
+        let buffer = chars("ghbdtn", language: .en)
+        let clock = ContinuousClock()
+        let elapsed = clock.measure {
+            for _ in 0..<5_000 {
+                _ = detector.decide(
+                    buffer: buffer,
+                    activeLanguage: .en,
+                    correctDoubleCapitals: true,
+                    correctDuplicateLetters: true,
+                    correctCommonTypos: true
+                )
+            }
+        }
+        #expect(elapsed < .seconds(5), "decide() x5000 exceeded budget: \(elapsed)")
+    }
+
     @Test func cupertinoFallsBackWhenDictionaryLacksSuggestionCandidate() {
         let detector = LayoutDetector(
             mapping: RuEnQwertyMapping(),

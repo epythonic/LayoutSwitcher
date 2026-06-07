@@ -464,6 +464,13 @@ struct LayoutDetector {
         return .keep
     }
 
+    /// Whether a "non-convertible" token (URL / email / path / identifier shape)
+    /// should be kept verbatim. The cross-language re-render below is intentional
+    /// and rare: it runs only for non-convertible tokens that also contain
+    /// layout-ambiguous keys (`;`, `[`, …), to override the keep when those exact
+    /// keystrokes spell a real word in another enabled layout. It is deliberately
+    /// *not* folded into the later candidate build — that build runs only after
+    /// this guard lets the token through, so the common keep path renders nothing.
     private func shouldKeepNonConvertibleRaw(
         _ raw: String,
         buffer: [WordChar],
