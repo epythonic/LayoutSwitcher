@@ -9,16 +9,61 @@ protocol FocusedAppObserving: AnyObject {
     var bundleID: String? { get }
     var localizedName: String? { get }
     var isSecureField: Bool { get }
+    var focusedFieldKind: FocusedFieldKind { get }
     var onChange: (@MainActor () -> Void)? { get set }
     func refreshSecureFieldState()
 }
 
-/// Reads the focused AX role from the system to decide whether to look up the focused
-/// element. Wrapped in a protocol so tests can mock without touching the AX subsystem.
+extension FocusedAppObserving {
+    /// Default keeps existing stubs source-compatible; live observer overrides it.
+    var focusedFieldKind: FocusedFieldKind { isSecureField ? .secure : .unknown }
+}
+
+/// Coarse classification of the focused text field, derived from AX role + subrole.
+/// Used today only to harden secure-field detection and for diagnostics; the pipeline
+/// continues to suppress corrections exclusively in `.secure` fields (no new UX risk).
+enum FocusedFieldKind: String, Sendable, Equatable {
+    /// Password / secure entry — corrections must never fire here.
+    case secure
+    /// Single-line search field.
+    case search
+    /// Ordinary editable text (text field or text area).
+    case text
+    /// No editable text element focused, or role could not be determined.
+    case unknown
+
+    /// Classifies a focused element from its AX role and optional subrole.
+    /// Secure detection is widened: some apps expose a generic text role with an
+    /// `AXSecureTextField` subrole rather than the dedicated secure role.
+    static func classify(role: String?, subrole: String?) -> FocusedFieldKind {
+        if role == "AXSecureTextField" || subrole == "AXSecureTextField" {
+            return .secure
+        }
+        if subrole == "AXSearchField" {
+            return .search
+        }
+        switch role {
+        case "AXTextField", "AXTextArea", "AXComboBox":
+            return .text
+        default:
+            return .unknown
+        }
+    }
+}
+
+/// Reads the focused AX role/subrole from the system to decide whether to look up the
+/// focused element. Wrapped in a protocol so tests can mock without touching the AX subsystem.
 @MainActor
 protocol FocusedRoleProviding {
     /// Returns AX role string of currently focused UI element, if available.
     func focusedRole() -> String?
+    /// Returns AX subrole string of currently focused UI element, if available.
+    func focusedSubrole() -> String?
+}
+
+extension FocusedRoleProviding {
+    /// Default lets existing role-only conformers (test stubs) compile unchanged.
+    func focusedSubrole() -> String? { nil }
 }
 
 /// Live AX-based implementation of focused-role provider.
@@ -27,16 +72,26 @@ struct AXFocusedRoleProvider: FocusedRoleProviding {
 
     /// Reads focused AX element role from system-wide accessibility object.
     func focusedRole() -> String? {
+        focusedAttribute(kAXRoleAttribute)
+    }
+
+    /// Reads focused AX element subrole from system-wide accessibility object.
+    func focusedSubrole() -> String? {
+        focusedAttribute(kAXSubroleAttribute)
+    }
+
+    /// Reads a single string attribute off the currently focused UI element.
+    private func focusedAttribute(_ attribute: String) -> String? {
         let systemWide = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focused)
         guard status == .success, let element = focused else { return nil }
         guard let axElement = AXElementBridge.element(from: element) else { return nil }
 
-        var role: CFTypeRef?
-        let roleStatus = AXUIElementCopyAttributeValue(axElement, kAXRoleAttribute as CFString, &role)
-        guard roleStatus == .success else { return nil }
-        return role as? String
+        var value: CFTypeRef?
+        let valueStatus = AXUIElementCopyAttributeValue(axElement, attribute as CFString, &value)
+        guard valueStatus == .success else { return nil }
+        return value as? String
     }
 }
 
@@ -67,6 +122,7 @@ final class FocusedAppObserver: FocusedAppObserving {
     private(set) var bundleID: String?
     private(set) var localizedName: String?
     private(set) var isSecureField: Bool = false
+    private(set) var focusedFieldKind: FocusedFieldKind = .unknown
 
     var onChange: (@MainActor () -> Void)?
 
@@ -151,14 +207,20 @@ final class FocusedAppObserver: FocusedAppObserving {
         localizedName = snapshot.localizedName
         refreshSecureFieldState()
         Self.logger.debug(
-            "Focused app: \(self.localizedName ?? "?", privacy: .public) [\(self.bundleID ?? "?", privacy: .public)] secure=\(self.isSecureField, privacy: .public)"
+            "Focused app: \(self.localizedName ?? "?", privacy: .public) [\(self.bundleID ?? "?", privacy: .public)] secure=\(self.isSecureField, privacy: .public) field=\(self.focusedFieldKind.rawValue, privacy: .public)"
         )
         onChange?()
     }
 
-    /// Recomputes secure-field flag from current focused AX element role.
+    /// Recomputes focused-field classification from the current AX role + subrole.
+    /// `isSecureField` is derived from the classification so password fields exposed
+    /// via subrole (not just the dedicated secure role) are also detected.
     func refreshSecureFieldState() {
-        let role = roleProvider.focusedRole()
-        isSecureField = (role == "AXSecureTextField")
+        let kind = FocusedFieldKind.classify(
+            role: roleProvider.focusedRole(),
+            subrole: roleProvider.focusedSubrole()
+        )
+        focusedFieldKind = kind
+        isSecureField = (kind == .secure)
     }
 }

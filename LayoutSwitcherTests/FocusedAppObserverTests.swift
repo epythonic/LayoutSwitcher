@@ -6,9 +6,14 @@ import Testing
 struct FocusedAppObserverTests {
     private struct StubRoleProvider: FocusedRoleProviding {
         let role: String?
+        var subrole: String?
 
         func focusedRole() -> String? {
             role
+        }
+
+        func focusedSubrole() -> String? {
+            subrole
         }
     }
 
@@ -89,6 +94,62 @@ struct FocusedAppObserverTests {
 
         observer.stop()
         #expect((removedToken as AnyObject?) === token)
+    }
+
+    @Test func classifiesDedicatedSecureRoleAsSecure() {
+        #expect(FocusedFieldKind.classify(role: "AXSecureTextField", subrole: nil) == .secure)
+    }
+
+    @Test func classifiesSecureSubroleOnGenericTextRoleAsSecure() {
+        // Some apps expose a generic text field with a secure subrole; widening
+        // detection here is the whole point of the conservative field-type work.
+        #expect(FocusedFieldKind.classify(role: "AXTextField", subrole: "AXSecureTextField") == .secure)
+    }
+
+    @Test func classifiesSearchSubroleAsSearch() {
+        #expect(FocusedFieldKind.classify(role: "AXTextField", subrole: "AXSearchField") == .search)
+    }
+
+    @Test func classifiesPlainTextRolesAsText() {
+        #expect(FocusedFieldKind.classify(role: "AXTextField", subrole: nil) == .text)
+        #expect(FocusedFieldKind.classify(role: "AXTextArea", subrole: nil) == .text)
+    }
+
+    @Test func classifiesUnknownRoleAsUnknown() {
+        #expect(FocusedFieldKind.classify(role: "AXButton", subrole: nil) == .unknown)
+        #expect(FocusedFieldKind.classify(role: nil, subrole: nil) == .unknown)
+    }
+
+    @Test func observerDetectsSecureFieldFromSubrole() {
+        let observer = FocusedAppObserver(
+            roleProvider: StubRoleProvider(role: "AXTextField", subrole: "AXSecureTextField"),
+            currentAppSnapshotProvider: {
+                WorkspaceAppSnapshot(bundleID: "com.test.app", localizedName: "Test App")
+            },
+            observeWorkspaceActivation: { _ in nil },
+            removeWorkspaceObserver: { _ in }
+        )
+
+        observer.start()
+
+        #expect(observer.isSecureField)
+        #expect(observer.focusedFieldKind == .secure)
+    }
+
+    @Test func observerExposesNonSecureFieldKindWithoutSuppressing() {
+        let observer = FocusedAppObserver(
+            roleProvider: StubRoleProvider(role: "AXTextField", subrole: "AXSearchField"),
+            currentAppSnapshotProvider: {
+                WorkspaceAppSnapshot(bundleID: "com.test.app", localizedName: "Test App")
+            },
+            observeWorkspaceActivation: { _ in nil },
+            removeWorkspaceObserver: { _ in }
+        )
+
+        observer.start()
+
+        #expect(!observer.isSecureField)
+        #expect(observer.focusedFieldKind == .search)
     }
 
     @Test func startIsIdempotentAndDoesNotRegisterDuplicateObservers() {
