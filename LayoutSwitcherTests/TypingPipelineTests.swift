@@ -1477,6 +1477,21 @@ struct TypingPipelineTests {
         #expect(fixture.output.postedUnicode.contains("be right back"))
     }
 
+    @Test func shadowModeEvaluatesWithoutApplying() async throws {
+        let fixture = try Self.makeFixture(retypeSucceeds: true)
+        fixture.appState.shadowMode = true
+
+        for event in try Self.wordEvents("ghbdtn", language: .en) {
+            fixture.pipeline.handle(event)
+        }
+
+        await Self.waitForAsyncWorkWindow(nanoseconds: 100_000_000)
+        // Nothing applied, but the would-be correction is surfaced.
+        #expect(fixture.output.selectedLayouts.isEmpty)
+        #expect(fixture.recents.entries.isEmpty)
+        #expect(fixture.appState.lastActionDescription?.contains("привет") == true)
+    }
+
     @Test func hotkeyAutoReplaceExpandsLiveBufferWord() async throws {
         let defaults = try #require(UserDefaults(suiteName: "TypingPipelineTests.autoReplaceHotkey"))
         defaults.removePersistentDomain(forName: "TypingPipelineTests.autoReplaceHotkey")

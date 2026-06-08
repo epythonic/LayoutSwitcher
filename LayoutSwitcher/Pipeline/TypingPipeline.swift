@@ -735,6 +735,18 @@ final class TypingPipeline {
         )
         guard !isRetyping else { return true }
 
+        // Shadow mode: surface what would have happened, but apply nothing.
+        if appState?.shadowMode == true {
+            appState?.lastActionDescription = String(
+                format: String(localized: "pipeline.result.shadow"),
+                originalText,
+                corrected
+            )
+            Self.logger.info("shadow: \"\(originalText, privacy: .public)\" → \"\(corrected, privacy: .public)\" target=\(target.rawValue, privacy: .public)")
+            resetPendingSequence(clearCooldown: true)
+            return true
+        }
+
         let extendEnabled = appState?.autoExtendRecentAmbiguous == true
         Self.logger.info("trigger: \"\(originalText, privacy: .public)\" → \"\(corrected, privacy: .public)\" target=\(target.rawValue, privacy: .public) extend=\(extendEnabled, privacy: .public) history=\(self.committedHistory.count, privacy: .public)")
         if extendEnabled {

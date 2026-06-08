@@ -37,6 +37,7 @@ final class AppState {
     private static let correctCommonTyposKey = "settings.correctCommonTypos"
     private static let correctSingleCharacterWordsKey = "settings.correctSingleCharacterWords"
     private static let autoExtendRecentAmbiguousKey = "settings.autoExtendRecentAmbiguous"
+    private static let shadowModeKey = "settings.shadowMode"
     private static let detectionSensitivityKey = "settings.detectionSensitivity"
     private static let detectionSensitivityByPairKey = "settings.detectionSensitivityByPair"
     private static let soundFeedbackEnabledKey = "settings.soundFeedbackEnabled"
@@ -91,6 +92,13 @@ final class AppState {
     var autoExtendRecentAmbiguous: Bool {
         didSet {
             defaults.set(autoExtendRecentAmbiguous, forKey: Self.autoExtendRecentAmbiguousKey)
+        }
+    }
+    /// Shadow mode: evaluate layout corrections and surface them without applying,
+    /// so detection accuracy can be trialed safely before enabling real retyping.
+    var shadowMode: Bool {
+        didSet {
+            defaults.set(shadowMode, forKey: Self.shadowModeKey)
         }
     }
     /// Fallback sensitivity for pairs without an explicit override (seeded from the
@@ -179,6 +187,7 @@ final class AppState {
         self.correctCommonTypos = defaults.bool(forKey: Self.correctCommonTyposKey)
         self.correctSingleCharacterWords = defaults.bool(forKey: Self.correctSingleCharacterWordsKey)
         self.autoExtendRecentAmbiguous = defaults.bool(forKey: Self.autoExtendRecentAmbiguousKey)
+        self.shadowMode = defaults.bool(forKey: Self.shadowModeKey)
         let legacySensitivityRaw = defaults.string(forKey: Self.detectionSensitivityKey)
         self.defaultDetectionSensitivity = legacySensitivityRaw.flatMap(DetectionSensitivity.init(rawValue:)) ?? .balanced
         self.detectionSensitivityByPair = Self.loadDetectionSensitivityByPair(from: defaults)

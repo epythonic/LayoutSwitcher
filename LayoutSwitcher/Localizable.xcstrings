@@ -1684,6 +1684,22 @@
         }
       }
     },
+    "pipeline.result.shadow" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Shadow: %1$@ → %2$@" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Umbră: %1$@ → %2$@" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Тень: %1$@ → %2$@" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Тінь: %1$@ → %2$@" } }
+      }
+    },
+    "settings.toggle.shadow-mode" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Shadow mode (evaluate without applying)" } },
+        "ro" : { "stringUnit" : { "state" : "translated", "value" : "Mod umbră (evaluează fără a aplica)" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Теневой режим (оценивать без применения)" } },
+        "uk" : { "stringUnit" : { "state" : "translated", "value" : "Тіньовий режим (оцінювати без застосування)" } }
+      }
+    },
     "pipeline.result.ambiguous" : {
       "localizations" : {
         "en" : {

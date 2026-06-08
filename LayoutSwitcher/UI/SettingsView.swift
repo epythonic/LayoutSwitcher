@@ -134,6 +134,8 @@ private struct GeneralTab: View {
                     .accessibilityIdentifier("settings.toggle.correct-single-char")
                 Toggle(String(localized: "settings.toggle.auto-extend-recent"), isOn: $appState.autoExtendRecentAmbiguous)
                     .accessibilityIdentifier("settings.toggle.auto-extend-recent")
+                Toggle(String(localized: "settings.toggle.shadow-mode"), isOn: $appState.shadowMode)
+                    .accessibilityIdentifier("settings.toggle.shadow-mode")
                 Picker(
                     String(localized: "settings.picker.aggressiveness") + " — " + appState.activeLanguagePair.localizedTitle,
                     selection: $appState.detectionSensitivity
